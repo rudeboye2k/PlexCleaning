@@ -5,22 +5,218 @@ Cross-references **Plex**, **Tautulli**, **Sonarr**, **Radarr** and **Seerr**
 touched in a long time — then removes them from every service in one
 coordinated pass.
 
-Runs as an internal-only web app on your server. Nothing is ever deleted
-without you selecting it, reviewing the exact list of service calls, and
-confirming.
+Runs as a self-contained container with a web portal. There is no config file
+to edit, no shell access needed, and no `.env` to maintain: start it, open it in
+a browser, and a setup wizard walks you through connecting each service.
 
-![dry run badge](https://img.shields.io/badge/default-dry%20run-3dd68c) ![python](https://img.shields.io/badge/python-3.11%2B-blue)
+Nothing is ever deleted without you selecting it, reviewing the exact list of
+service calls, and confirming.
+
+![dry run](https://img.shields.io/badge/default-dry%20run-3dd68c)
+![arch](https://img.shields.io/badge/arch-amd64%20%7C%20arm64-blue)
+![python](https://img.shields.io/badge/python-3.11%2B-blue)
 
 ---
 
-## What it actually does
+## Install
+
+### Synology Container Manager
+
+1. In **File Station**, create the folder `docker/plexcleaner/data`.
+2. Over SSH, run `id your-dsm-username` and note the `uid` and `gid`. DSM's
+   first user is usually `1026`, and the `users` group is `100`.
+3. **Container Manager → Project → Create**
+   - Project name: `plexcleaner`
+   - Path: the folder from step 1
+   - Source: *Create docker-compose.yml*
+   - Paste the contents of [`docker-compose.synology.yml`](docker-compose.synology.yml)
+   - Change `PUID`/`PGID` to the values from step 2, and set
+     `PLEXCLEANER_ALLOWED_NETWORKS` to your LAN subnet
+4. Build and start it, then open `http://your-nas:8585`.
+
+`PUID`/`PGID` are the step people get wrong. If the container cannot write its
+database, the log will say so on the first line — check that they match the
+owner of the folder you created.
+
+### Portainer
+
+**Stacks → Add stack → Web editor**, paste
+[`docker-compose.yml`](docker-compose.yml), deploy. Environment variables can go
+in the editor or in Portainer's own environment table — either works.
+
+### Plain Docker
+
+```bash
+docker run -d --name plexcleaner \
+  -p 8585:8585 \
+  -v plexcleaner-data:/data \
+  -e PUID=1000 -e PGID=1000 \
+  -e PLEXCLEANER_ALLOWED_NETWORKS=192.168.1.0/24 \
+  --restart unless-stopped \
+  ghcr.io/rudeboye2k/plexcleaning:latest
+```
+
+### From source
+
+```bash
+git clone https://github.com/rudeboye2k/PlexCleaning.git
+cd PlexCleaning
+docker compose -f docker-compose.build.yml up -d --build
+```
+
+Or without Docker:
+
+```bash
+python -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -e .
+.venv/bin/plexcleaner serve
+```
+
+Then open `http://your-host:8585` and the wizard takes over.
+
+---
+
+## What you will need
+
+The wizard asks for these, and tests each one as you enter it. Everything is
+optional except Plex or Tautulli.
+
+| Service | Where the key lives |
+|---|---|
+| **Plex** | Open any library item in Plex Web → **Get Info** → **View XML**, then copy `X-Plex-Token` from the address bar |
+| **Tautulli** | Settings → Web Interface → API |
+| **Sonarr** | Settings → General → API Key |
+| **Radarr** | Settings → General → API Key |
+| **Seerr** | Settings → General → API Key |
+
+**Connect Tautulli.** Plex's own `lastViewedAt` only reflects the *server
+owner's* account, so a show your friends watch every week looks untouched in
+Plex. Tautulli sees every account, which is why it is treated as the authority
+on watch state. Without it, the candidate list will be wrong in the most
+dangerous direction.
+
+---
+
+## Configuring it
+
+Everything lives on the **Settings** page and applies immediately — no restart,
+no container rebuild. Saved settings are stored in the database on your `/data`
+volume, so they survive image updates.
+
+Configuration comes from four layers, lowest precedence first:
+
+| Layer | Purpose |
+|---|---|
+| Built-in defaults | Sensible values for a home server |
+| `config.yaml` *(optional)* | For people who prefer files or Git |
+| Environment variables | How Container Manager and Portainer inject values |
+| **Web UI** | What you edit in the portal — **wins** |
+
+The web UI winning is deliberate: what you save is what applies. Environment
+variables still matter — they seed a brand-new install so a container can come
+up already configured, and the Settings page puts an `ENV` badge on any field
+whose environment value is being shadowed by a saved one, with a one-click reset
+to fall back.
+
+Every field shows where its value came from: `ENV`, `FILE`, `SAVED`, or nothing
+for a default.
+
+### Useful environment variables
+
+All optional — the wizard can collect everything instead.
+
+| Variable | Meaning |
+|---|---|
+| `PUID` / `PGID` / `UMASK` | Match the owner of your `/data` volume |
+| `PLEXCLEANER_ALLOWED_NETWORKS` | Comma-separated CIDRs allowed to reach the UI |
+| `PLEXCLEANER_PASSWORD` | Web UI password |
+| `PLEXCLEANER_TRUST_PROXY` | Set when a reverse proxy you control sits in front |
+| `PLEXCLEANER_LOCK_SAFETY` | Stops the web UI from ever leaving dry-run mode |
+| `PLEX_URL` / `PLEX_TOKEN` | Pre-seed Plex; same pattern for `TAUTULLI_`, `SONARR_`, `RADARR_`, `SEERR_` |
+| `SONARR_2_URL` / `SONARR_2_API_KEY` | A second instance, e.g. a 4K setup (up to 4) |
+
+A service switches itself on as soon as it has both a URL and a key, so two
+variables per service is enough.
+
+---
+
+## Safety model
+
+This tool deletes irreplaceable data, so the defaults are deliberately timid.
+
+- **Dry run is on by default.** Every action is simulated and written to the
+  audit log. Turning it off requires typing the confirmation phrase, and if
+  `PLEXCLEANER_LOCK_SAFETY=true` is set, the portal cannot turn it off at all —
+  useful when other people can reach the UI.
+- **Two phases.** A scan only builds candidate lists. A plan turns your
+  selection into an explicit list of service calls you review before executing.
+- **Typed confirmation** before any live execution.
+- **Per-run caps** on item count, user count and total gigabytes. A plan that
+  exceeds them is refused, not truncated.
+- **Snapshots.** A JSON record of every item is written to
+  `/data/backups/plan-<id>/` before deletion, so you can re-add it by hand.
+- **Permanent keep list.** "Never suggest again" survives every future scan.
+- **Full audit log** of every call, simulated or real.
+- **Protections** for Plex labels, Plex collections, \*arr tags, still-airing
+  monitored series, partially-watched items, recently requested titles, admins,
+  and Plex Home users.
+
+### Keeping it internal
+
+Three independent layers, all on by default:
+
+1. **Network guard** — every request's source address is checked against
+   `allowed_networks`. Anything outside gets a `403`, even if a port-forward or
+   reverse proxy is misconfigured later. `/healthz` is the only exception, so
+   container health checks work.
+2. **Password + CSRF** — set a password for a login prompt. State-changing
+   requests require a matching CSRF token whether or not a password is set.
+3. **Bind address** — you can pin the published port to one interface
+   (`"10.12.128.4:8585:8585"`) instead of all of them.
+
+Behind Synology's reverse proxy, Nginx Proxy Manager or Traefik, enable
+**Trust reverse proxy headers** — otherwise the network guard only ever sees the
+proxy's own address. Only enable it when the proxy is yours; otherwise a forged
+`X-Forwarded-For` header defeats the guard.
+
+Do not expose this publicly. It holds API keys for five services and can delete
+your entire library.
+
+---
+
+## Using it
+
+1. **Dashboard → Test connections.** Fix anything red first.
+2. **Run scan.** Reads every service and builds the candidate lists. Nothing is
+   modified. A few minutes for a large library.
+3. **Media tab.** Sort by size, filter by library, and read the *Why* column —
+   every verdict explains itself. Use **Never suggest again** for anything you
+   want permanently exempt.
+4. **Build deletion plan.** Shows the exact service calls, in order.
+5. **Run simulation.** Confirms every call would succeed, changes nothing.
+6. When you trust it: turn off dry run in Settings, return to a plan, type the
+   confirmation phrase, execute.
+
+### Suggested first run
+
+Start conservative and tighten later:
+
+- Unwatched threshold: **730** days
+- Never-watched grace: **365** days
+- Minimum age: **90** days
+- Max media per run: **5**
+
+Leave it in dry run for a couple of weeks and read the candidate list. When it
+stops surprising you, lower the thresholds.
+
+---
+
+## How the cross-referencing works
 
 **Finding stale media.** Plex provides the library inventory (titles, GUIDs,
-file sizes, labels, collections). Tautulli provides the truth about who watched
-what and when — this matters, because Plex's own `lastViewedAt` only reflects
-the *owner's* account, so a show your friends watch weekly can look untouched.
-Sonarr and Radarr supply on-disk size, tags and whether a series is still
-airing. Seerr supplies who requested a title and when.
+file sizes, labels, collections). Tautulli provides who watched what and when.
+Sonarr and Radarr provide on-disk size, tags and whether a series is still
+airing. Seerr provides who requested a title and when.
 
 Items are matched across services by TMDB / TVDB / IMDb id first, then Plex
 rating key, then a normalised title+year — and an ambiguous title match is
@@ -40,173 +236,22 @@ streams through another client still counts as active.
 | 3 | Plex | Only *refreshes* the library if an \*arr already deleted the files. Deletes directly when no \*arr owned the item. |
 | 4 | Tautulli | Optional history purge. |
 
-For users: Seerr account deleted → Plex access revoked → Tautulli entry removed
-(each step individually toggleable).
+For users: Seerr account deleted → Plex access revoked → Tautulli entry removed,
+each step individually toggleable. The Plex action defaults to **unshare**,
+which revokes library access but keeps the friendship and can be undone;
+**remove friend** cannot.
 
 If a step fails, the remaining steps for that item are skipped rather than
 pressed on with — a half-deleted title is worse than an untouched one.
 
 ---
 
-## Safety model
-
-This tool deletes irreplaceable data, so the defaults are deliberately timid.
-
-- **Dry run is on by default.** Every action is simulated and written to the
-  audit log. You must edit `safety.dry_run: false` in the config file *and*
-  restart before anything real happens. The web UI cannot flip this — a
-  compromised browser session cannot start deleting.
-- **Two phases.** A scan only builds candidate lists. A plan turns your
-  selection into an explicit list of service calls that you review before
-  executing.
-- **Typed confirmation.** Live execution requires typing the exact
-  `safety.confirm_phrase`.
-- **Per-run caps** on item count, user count and total gigabytes. A plan that
-  exceeds them is refused, not truncated.
-- **Snapshots.** A JSON record of every item is written to
-  `data/backups/plan-<id>/` before deletion, so you can re-add it by hand.
-- **Permanent keep list.** "Never suggest again" survives every future scan.
-- **Full audit log** of every call, simulated or real.
-- **Protections** for: Plex labels, Plex collections, \*arr tags, still-airing
-  monitored series, partially-watched items, recently requested titles, admins,
-  and Plex Home users.
-
----
-
-## Requirements
-
-- Python 3.11+ (or Docker)
-- Plex Media Server with **Settings → Library → Allow media deletion** enabled
-  *only if* you want Plex to delete items it owns directly. If every title is
-  managed by Sonarr/Radarr, you can leave this off.
-- Tautulli, Sonarr, Radarr, Seerr — all optional, but Plex or Tautulli must be
-  enabled so watch state can be determined.
-
----
-
-## Setup
-
-```bash
-git clone https://github.com/rudeboye2k/PlexCleaning.git
-cd PlexCleaning
-
-cp config/config.example.yaml config/config.yaml
-cp .env.example .env
-```
-
-Put your secrets in `.env` (it is gitignored); `config.yaml` refers to them as
-`${VAR}` so no keys are ever committed:
-
-```bash
-openssl rand -hex 32          # use for PLEXCLEANER_SECRET_KEY
-```
-
-| Variable | Where to find it |
-|---|---|
-| `PLEX_TOKEN` | Any Plex web player → library item → **Get Info** → **View XML** → copy `X-Plex-Token` from the URL |
-| `TAUTULLI_API_KEY` | Tautulli → Settings → Web Interface → API |
-| `SONARR_API_KEY` | Sonarr → Settings → General |
-| `RADARR_API_KEY` | Radarr → Settings → General |
-| `SEERR_API_KEY` | Seerr → Settings → General |
-
-Then edit `config/config.yaml` — at minimum set the service URLs, and set
-`app.host` to your internal IP (`10.12.128.4`).
-
-### Run with Docker (recommended)
-
-```bash
-docker compose up -d --build
-```
-
-The compose file publishes on `10.12.128.4:8585` only. That IP prefix matters:
-without it Docker binds `0.0.0.0` and writes an iptables rule that bypasses a
-host firewall.
-
-### Run directly
-
-```bash
-python -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/pip install -e .
-
-plexcleaner test          # verify every service is reachable
-plexcleaner serve
-```
-
-A systemd unit:
-
-```ini
-[Unit]
-Description=PlexCleaner
-After=network-online.target
-
-[Service]
-User=plex
-WorkingDirectory=/opt/PlexCleaning
-Environment=PLEXCLEANER_CONFIG=/opt/PlexCleaning/config/config.yaml
-ExecStart=/opt/PlexCleaning/.venv/bin/plexcleaner serve
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-```
-
----
-
-## Keeping it internal
-
-Three independent layers, all on by default:
-
-1. **Bind address** — `app.host: "10.12.128.4"` means the socket only listens
-   on your LAN interface. Nothing on a WAN interface can reach it.
-2. **Network guard** — every request's source address is checked against
-   `app.allowed_networks`. Anything outside gets a `403`, even if a reverse
-   proxy or port-forward is misconfigured later. `/healthz` is the only
-   exception, so container health checks work.
-3. **Password + CSRF** — set `PLEXCLEANER_PASSWORD` for a login prompt.
-   State-changing requests additionally require a matching CSRF token.
-
-Do not put this behind a public reverse proxy or Cloudflare tunnel. It holds
-API keys for five services and can delete your entire library.
-
----
-
-## Using it
-
-1. **Dashboard → Test connections.** Fix anything red before going further.
-2. **Run scan.** Reads every service and builds the candidate lists. Nothing is
-   modified. A few minutes for a large library.
-3. **Media tab.** Sort by size, filter by library, read the *Why* column — every
-   verdict explains itself. Use **Never suggest again** on anything you want
-   permanently exempt.
-4. **Build deletion plan.** Shows the exact service calls, in order.
-5. **Run simulation.** Confirms every call would succeed, changes nothing.
-6. When you trust it: set `safety.dry_run: false`, restart, return to a plan,
-   type the confirm phrase, execute.
-
-### Suggested first run
-
-Start conservative and tighten later:
-
-```yaml
-rules:
-  media:
-    unwatched_days: 730          # two years
-    never_watched_after_days: 365
-    min_age_days: 90
-safety:
-  max_media_deletions_per_run: 5
-```
-
-Run in dry-run for a couple of weeks and read the candidate list. When it stops
-surprising you, lower the thresholds.
-
----
-
 ## CLI
 
-Useful for cron and for verifying a config before trusting the UI with it.
+Optional. The portal can do all of this; the CLI exists for cron and scripting.
 
 ```bash
+plexcleaner config                      # show the effective configuration
 plexcleaner test                        # connectivity check
 plexcleaner scan                        # refresh candidate lists
 plexcleaner report --kind movie         # list stale movies
@@ -214,41 +259,24 @@ plexcleaner report --users              # list inactive users
 plexcleaner plan --top 10               # plan from the 10 largest candidates
 plexcleaner apply 3                     # simulate plan #3
 plexcleaner apply 3 --live --confirm DELETE
-plexcleaner prune --days 365            # trim audit log and old scans
+plexcleaner reset-settings              # discard UI settings, fall back to env
 ```
 
-A nightly scan (actions still stay manual):
+Inside a container: `docker exec plexcleaner plexcleaner config`.
 
-```cron
-30 4 * * * /opt/PlexCleaning/.venv/bin/plexcleaner scan >> /var/log/plexcleaner.log 2>&1
-```
-
-Or leave `schedule.scan_enabled: true` and the server does it internally.
+`plexcleaner config` is the fastest way to see what a container actually thinks
+its settings are, including which environment variables are being shadowed.
 
 ---
 
-## Configuration reference
+## Updating
 
-Every option is documented inline in
-[`config/config.example.yaml`](config/config.example.yaml). The ones worth
-understanding before your first live run:
+```bash
+docker compose pull && docker compose up -d
+```
 
-| Key | Meaning |
-|---|---|
-| `safety.dry_run` | Master switch. `true` means nothing is ever deleted. |
-| `rules.media.unwatched_days` | Days since anyone last watched before an item is a candidate. |
-| `rules.media.never_watched_after_days` | Grace period for items nobody has ever watched, measured from when they were added. |
-| `rules.media.min_age_days` | Absolute floor — nothing newer is ever proposed. |
-| `rules.media.protect_continuing_series` | Keep shows Sonarr still lists as airing and monitored. |
-| `rules.media.protect_in_progress` | Keep anything someone is partway through. |
-| `rules.media.protect_recent_seerr_requests_days` | Keep recently requested titles. |
-| `rules.users.inactive_days` | Days with no playback *and* no Seerr login. |
-| `rules.users.plex_action` | `unshare` (reversible), `remove_friend`, or `none`. |
-| `sonarr[].delete_files` | Whether removing a series also deletes files. `false` unmonitors only. |
-| `sonarr[].add_import_exclusion` | Stop automation re-adding what you just removed. |
-
-Multiple Sonarr/Radarr instances (e.g. an HD and a 4K instance) are supported —
-add another entry to the list with a unique `name`.
+Settings and history live in the `/data` volume, so they survive the update.
+In Container Manager, use **Project → Action → Build** after pulling.
 
 ---
 
@@ -261,41 +289,58 @@ python -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
-105 tests cover the rules engine, cross-service matching, plan building,
-execution safety rails, an end-to-end scan against mocked HTTP for all five
-services, and the network/auth guards.
+163 tests cover the rules engine, cross-service matching, plan building,
+execution safety rails, the settings store's layering and persistence, an
+end-to-end scan against mocked HTTP for all five services, and the network,
+auth and CSRF guards.
 
 ```
 plexcleaner/
-├── config.py         YAML + ${ENV} config, validation
-├── db.py             SQLite schema, audit log, protections
-├── models.py         MediaItem / UserAccount / Step
-├── match.py          cross-service identity matching
-├── scan.py           inventory + merge + evaluate
-├── rules.py          candidate / keep / protected verdicts
-├── actions.py        plan building and execution
-├── clients/          one module per service
-└── web/              FastAPI app, templates, static assets
+├── config.py          dataclasses, validation, redaction
+├── settings_store.py  four-layer config with live reload
+├── schema.py          field definitions that drive the whole portal UI
+├── db.py              SQLite schema, audit log, protections
+├── models.py          MediaItem / UserAccount / Step
+├── match.py           cross-service identity matching
+├── scan.py            inventory + merge + evaluate
+├── rules.py           candidate / keep / protected verdicts
+├── actions.py         plan building and execution
+├── clients/           one module per service
+└── web/               FastAPI app, templates, static assets
 ```
+
+Adding a setting means adding a field to the dataclass in `config.py` and an
+entry in `schema.py` — the portal form, help text, validation and provenance
+badges all follow from that.
 
 ---
 
 ## Troubleshooting
 
-**Everything shows as never watched.** Tautulli is not enabled or not
-reachable. Plex alone only knows about the owner's playback.
+**Container will not start / cannot write the database.** `PUID`/`PGID` do not
+match the owner of your data folder. Run `id your-username` on the NAS and set
+them accordingly. The entrypoint logs a warning naming the directory it could
+not take ownership of.
+
+**403 when opening the web UI.** Your client's IP is outside
+`PLEXCLEANER_ALLOWED_NETWORKS`. The 403 page names the address it saw, so add
+that subnet. Behind a reverse proxy, enable *Trust reverse proxy headers*.
+
+**Everything shows as never watched.** Tautulli is not connected. Plex alone
+only knows about the owner's playback.
+
+**Changing an environment variable does nothing.** A saved setting is shadowing
+it. The Settings page lists which ones and offers a reset.
 
 **Plex deletion returns 401.** Enable *Allow media deletion* in Plex → Settings
-→ Library.
+→ Library. Not needed if Sonarr/Radarr manage every title.
 
-**A title reappears after deletion.** `add_import_exclusion` was off, and an
+**A title reappears after deletion.** *Add import exclusion* was off, and an
 import list re-added it.
 
 **Items show 0 GB.** Plex has not scanned the file sizes; the \*arr value is
 used as a fallback, so check the item is matched to Sonarr/Radarr (the Services
 column).
-
-**403 from the web UI.** Your client IP is outside `app.allowed_networks`.
 
 ---
 

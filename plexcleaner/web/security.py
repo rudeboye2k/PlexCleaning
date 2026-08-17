@@ -1,6 +1,9 @@
 """Two independent gates: network origin, then a signed session cookie.
 
-The network gate is the important one. Even with auth disabled, the app only
+Both read their configuration from the settings store on every request, so
+changes made in the web UI take effect immediately without a restart.
+
+The network gate is the important one. Even with no password set, the app only
 answers requests whose source address falls inside app.allowed_networks.
 """
 from __future__ import annotations
@@ -20,26 +23,30 @@ log = logging.getLogger(__name__)
 
 COOKIE = "plexcleaner_session"
 CSRF_COOKIE = "plexcleaner_csrf"
-PUBLIC_PATHS = {"/login", "/healthz", "/static"}
+PUBLIC_PREFIXES = ("/login", "/static", "/healthz")
+UNGUARDED = {"/healthz"}
 
 
 class NetworkGuard(BaseHTTPMiddleware):
     """Reject anything originating outside the configured internal networks."""
 
-    def __init__(self, app, allowed_networks: list, trust_proxy_header: bool = False):
+    def __init__(self, app, store):
         super().__init__(app)
-        self.allowed = allowed_networks
-        self.trust_proxy_header = trust_proxy_header
+        self.store = store
 
     def client_ip(self, request: Request) -> str:
-        if self.trust_proxy_header:
+        cfg = self.store.current()
+        if cfg.app.trust_proxy:
             forwarded = request.headers.get("x-forwarded-for", "")
             if forwarded:
                 return forwarded.split(",")[0].strip()
+            real = request.headers.get("x-real-ip", "")
+            if real:
+                return real.strip()
         return request.client.host if request.client else ""
 
     async def dispatch(self, request: Request, call_next):
-        if request.url.path == "/healthz":
+        if request.url.path in UNGUARDED:
             return await call_next(request)
         raw = self.client_ip(request)
         try:
@@ -47,40 +54,55 @@ class NetworkGuard(BaseHTTPMiddleware):
         except ValueError:
             log.warning("rejecting request with unparseable source address %r", raw)
             return PlainTextResponse("Forbidden", status_code=403)
-        if not any(ip in net for net in self.allowed):
+        if not any(ip in net for net in self.store.current().allowed_cidrs()):
             log.warning("rejecting request from %s (outside allowed networks)", ip)
-            return PlainTextResponse("Forbidden: this service is internal only.", status_code=403)
+            return PlainTextResponse(
+                f"Forbidden: this service is internal only and {ip} is not on an allowed "
+                "network. Add its subnet under Settings → Access and security, or set "
+                "PLEXCLEANER_ALLOWED_NETWORKS.",
+                status_code=403,
+            )
         return await call_next(request)
 
 
 class SessionAuth(BaseHTTPMiddleware):
     """Signed-cookie session with a shared password, plus CSRF on writes."""
 
-    def __init__(self, app, secret_key: str, password: str, max_age_seconds: int):
+    def __init__(self, app, store):
         super().__init__(app)
-        self.enabled = bool(password)
-        self.password = password
-        self.max_age = max_age_seconds
-        self.serializer = URLSafeTimedSerializer(secret_key or secrets.token_hex(32), salt="plexcleaner")
+        self.store = store
+        self._serializers: dict[str, URLSafeTimedSerializer] = {}
+
+    # -- helpers used by the login route ---------------------------------
+    def serializer(self) -> URLSafeTimedSerializer:
+        key = self.store.current().app.secret_key or "unset"
+        if key not in self._serializers:
+            self._serializers[key] = URLSafeTimedSerializer(key, salt="plexcleaner")
+        return self._serializers[key]
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.store.current().app.password)
 
     def make_token(self) -> str:
-        return self.serializer.dumps({"ok": True})
+        return self.serializer().dumps({"ok": True})
 
     def valid(self, token: str | None) -> bool:
         if not token:
             return False
+        max_age = self.store.current().app.session_hours * 3600
         try:
-            self.serializer.loads(token, max_age=self.max_age)
+            self.serializer().loads(token, max_age=max_age)
             return True
         except (BadSignature, SignatureExpired):
             return False
 
     def check_password(self, candidate: str) -> bool:
-        return hmac.compare_digest(candidate or "", self.password)
+        return hmac.compare_digest(candidate or "", self.store.current().app.password)
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path == "/healthz" or any(path.startswith(p) for p in PUBLIC_PATHS):
+        if path.startswith(PUBLIC_PREFIXES):
             return await call_next(request)
 
         if self.enabled and not self.valid(request.cookies.get(COOKIE)):

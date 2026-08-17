@@ -1,32 +1,66 @@
+# PlexCleaner — paste this straight into Portainer (Stacks → Add stack → Web editor)
+# or Synology Container Manager (Container Manager → Project → Create).
+#
+# Everything else is configured in the web UI at http://<your-host>:8585 — the
+# first visit runs a setup wizard. You do not need a .env file, a config file,
+# or shell access.
 services:
   plexcleaner:
-    build: .
-    image: plexcleaner:latest
+    image: ghcr.io/rudeboye2k/plexcleaning:latest
     container_name: plexcleaner
     restart: unless-stopped
 
-    # Published on the internal LAN address only. Without the IP prefix Docker
-    # would bind 0.0.0.0 and punch a hole in the host firewall via iptables.
     ports:
-      - "10.12.128.4:8585:8585"
+      # Reachable on your LAN only, thanks to the built-in network guard.
+      # To pin it to one interface instead, use "10.12.128.4:8585:8585".
+      - "8585:8585"
 
     volumes:
-      - ./config:/config
-      - ./data:/data
+      # The only volume that matters. Holds the database, your saved settings
+      # and the pre-delete snapshots. Back this up.
+      - plexcleaner-data:/data
 
     environment:
-      PLEXCLEANER_CONFIG: /config/config.yaml
-      TZ: ${TZ:-UTC}
-    env_file:
-      - .env
+      # Match these to the user that owns your volumes. On Synology, find them
+      # with `id your-username` over SSH; 1026/100 is a common first-user pair.
+      PUID: 1000
+      PGID: 1000
+      UMASK: "022"
+      TZ: Etc/UTC
 
-    # Inside the container the app binds all interfaces; the port mapping above
-    # plus app.allowed_networks in config.yaml are what keep it internal.
-    command: ["serve", "--host", "0.0.0.0", "--port", "8585"]
+      # Which subnets may reach the web UI. Everything else gets a 403.
+      # Narrow this to your own subnet once you know it, e.g. 10.12.128.0/24.
+      PLEXCLEANER_ALLOWED_NETWORKS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
+      # Strongly recommended. Can also be set later in the web UI.
+      # PLEXCLEANER_PASSWORD: "change-me"
+
+      # Optional: pre-seed the services so the wizard arrives already filled in.
+      # Anything you set here can still be edited in the web UI afterwards.
+      # PLEX_URL: "http://10.12.128.4:32400"
+      # PLEX_TOKEN: ""
+      # TAUTULLI_URL: "http://10.12.128.4:8181"
+      # TAUTULLI_API_KEY: ""
+      # SONARR_URL: "http://10.12.128.4:8989"
+      # SONARR_API_KEY: ""
+      # RADARR_URL: "http://10.12.128.4:7878"
+      # RADARR_API_KEY: ""
+      # SEERR_URL: "http://10.12.128.4:5055"
+      # SEERR_API_KEY: ""
+
+      # Optional: refuse to let the web UI leave dry-run mode. Useful if someone
+      # else has access to the portal and you want deletions off the table.
+      # PLEXCLEANER_LOCK_SAFETY: "true"
+
+      # Set to true only if a reverse proxy you control sits in front.
+      # PLEXCLEANER_TRUST_PROXY: "true"
 
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8585/healthz', timeout=4).status==200 else 1)"]
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8585/healthz', timeout=8).status==200 else 1)"]
       interval: 60s
-      timeout: 5s
+      timeout: 10s
       retries: 3
-      start_period: 15s
+      start_period: 20s
+
+volumes:
+  plexcleaner-data:

@@ -12,6 +12,7 @@ from plexcleaner.config import (AppConfig, ArrConfig, Config, MediaRules, PlexCo
                                 SafetyConfig, SeerrConfig, TautulliConfig, UserRules)
 from plexcleaner.db import Database
 from plexcleaner.models import MediaItem, UserAccount
+from plexcleaner.settings_store import SettingsStore
 
 NOW = datetime(2026, 8, 17, tzinfo=timezone.utc)
 
@@ -42,6 +43,22 @@ def cfg(tmp_path) -> Config:
 @pytest.fixture
 def db(tmp_path) -> Database:
     return Database(tmp_path / "test.db")
+
+
+@pytest.fixture
+def store(db, cfg) -> SettingsStore:
+    """A settings store seeded with the test config, isolated from the real env."""
+    s = SettingsStore(db, yaml_path=None, environ={})
+    # Written directly so the fixture is not constrained by save()'s validation.
+    db.set_setting("config", cfg.to_dict())
+    s.reload()
+    return s
+
+
+@pytest.fixture
+def empty_store(db) -> SettingsStore:
+    """An unconfigured store, as a brand-new container would have."""
+    return SettingsStore(db, yaml_path=None, environ={})
 
 
 @pytest.fixture

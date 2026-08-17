@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}Setup — PlexCleaner{% endblock %}
+
+{% block content %}
+<div class="wizard">
+  <ol class="wizard-steps" id="wizard-steps"></ol>
+
+  <div id="wizard-body">
+    <section class="card">
+      <h2>Welcome</h2>
+      <p>Loading setup…</p>
+    </section>
+  </div>
+
+  <div class="wizard-nav">
+    <button id="wiz-back" class="btn">← Back</button>
+    <span id="wiz-status" class="muted small"></span>
+    <div class="spacer"></div>
+    <button id="wiz-skip" class="btn">Skip this step</button>
+    <button id="wiz-next" class="btn btn-primary">Continue →</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/settings.js"></script>
+<script>
+const WELCOME = `
+<section class="card">
+  <h2>Welcome to PlexCleaner</h2>
+  <p>This tool reads Plex, Tautulli, Sonarr, Radarr and Seerr, works out which
+  shows, movies and users nobody has touched in a long time, and can remove them
+  from every service in one coordinated pass.</p>
+
+  <div class="callout callout-safe">
+    <strong>Nothing can be deleted yet.</strong> Dry-run mode is on, so every
+    action is simulated and logged until you deliberately turn it off. You will
+    always select what goes, review the exact list of service calls, and confirm.
+  </div>
+
+  <h3>What you will need</h3>
+  <ul class="spaced">
+    <li><strong>Plex</strong> — server URL and an X-Plex-Token. Open any library
+        item in Plex Web → <em>Get Info</em> → <em>View XML</em>, then copy
+        <code>X-Plex-Token</code> out of the address bar.</li>
+    <li><strong>Tautulli</strong> — URL and API key from Settings → Web Interface.
+        Strongly recommended: without it only the server owner's playback is
+        visible, so anything your friends watch will look untouched.</li>
+    <li><strong>Sonarr / Radarr</strong> — URL and API key from Settings → General.
+        Optional, but they own the files on disk.</li>
+    <li><strong>Seerr</strong> — Overseerr, Jellyseerr or Seerr. Optional.</li>
+  </ul>
+  <p class="muted small">Every step can be skipped and changed later on the
+  Settings page. Nothing is saved until you press Continue.</p>
+</section>`;
+
+const REVIEW_EXTRA = `
+<section class="card">
+  <h2>Ready to go</h2>
+  <p>Setup is complete. The next step is a scan, which reads every service and
+  builds the candidate lists. A scan changes nothing.</p>
+  <div class="callout callout-safe">
+    Leave <strong>dry run</strong> on until you have looked over a few candidate
+    lists and run a simulation or two. When you are ready to delete for real,
+    turn it off here or on the Settings page — it will ask you to type
+    <code>{{ confirm_phrase }}</code>.
+  </div>
+  <div id="review-status"></div>
+</section>`;
+
+let step = 0;
+let steps = [];
+
+async function boot() {
+  // Step order comes from the server, so the schema stays the single source.
+  const schema = await api('/api/schema');
+  if (!schema || !await SettingsForm.load()) {
+    document.getElementById('wizard-body').innerHTML =
+      '<section class="card warn"><h2>Could not load setup</h2>' +
+      '<p>The server did not return its settings schema. Check the container logs.</p></section>';
+    return;
+  }
+  steps = schema.wizard;
+  renderStep();
+}
+
+function renderSteps() {
+  document.getElementById('wizard-steps').innerHTML = steps.map((s, i) =>
+    `<li class="${i === step ? 'active' : (i < step ? 'done' : '')}">${esc(s.title)}</li>`).join('');
+}
+
+function renderStep() {
+  const current = steps[step];
+  const body = document.getElementById('wizard-body');
+  renderSteps();
+
+  if (current.key === 'welcome') {
+    body.innerHTML = WELCOME;
+  } else {
+    body.innerHTML = '<div id="wiz-sections"></div>' + (current.key === 'review' ? REVIEW_EXTRA : '');
+    SettingsForm.render(document.getElementById('wiz-sections'), current.sections);
+  }
+
+  document.getElementById('wiz-back').style.visibility = step === 0 ? 'hidden' : 'visible';
+  document.getElementById('wiz-skip').style.display =
+    (current.key === 'welcome' || current.key === 'review') ? 'none' : '';
+  document.getElementById('wiz-next').textContent =
+    step === steps.length - 1 ? 'Finish setup' : 'Continue →';
+  window.scrollTo({top: 0, behavior: 'smooth'});
+}
+
+async function saveAndAdvance() {
+  const next = document.getElementById('wiz-next');
+  const status = document.getElementById('wiz-status');
+  next.disabled = true;
+  status.textContent = 'Saving…';
+
+  const res = await SettingsForm.save();
+  next.disabled = false;
+
+  if (!res) { status.textContent = ''; return; }
+  status.textContent = '';
+
+  if (step === steps.length - 1) {
+    if (res.problems && res.problems.length) {
+      document.getElementById('review-status').innerHTML =
+        `<div class="callout callout-warn"><strong>Almost there:</strong>
+         <ul>${res.problems.map(p => '<li>' + esc(p) + '</li>').join('')}</ul></div>`;
+      return;
+    }
+    toast('Setup complete');
+    setTimeout(() => location.href = '/', 600);
+    return;
+  }
+  step += 1;
+  renderStep();
+}
+
+document.getElementById('wiz-next').onclick = saveAndAdvance;
+document.getElementById('wiz-back').onclick = () => { if (step > 0) { step -= 1; renderStep(); } };
+document.getElementById('wiz-skip').onclick = () => { step += 1; renderStep(); };
+
+boot();
+</script>
+{% endblock %}

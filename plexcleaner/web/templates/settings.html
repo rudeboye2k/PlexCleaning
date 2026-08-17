@@ -2,72 +2,50 @@
 {% block title %}Settings — PlexCleaner{% endblock %}
 
 {% block content %}
-<section class="card">
-  <h2>Configuration</h2>
-  <p class="muted">
-    Settings are read from <code>{{ config_path }}</code>. Edit that file and restart the service to
-    change them — nothing here writes secrets back to disk.
-  </p>
-  {% if problems %}
-  <div class="warn"><ul>{% for p in problems %}<li>{{ p }}</li>{% endfor %}</ul></div>
-  {% endif %}
-
-  <div class="grid-2">
-    <div>
-      <h3>Safety</h3>
-      <dl class="kv">
-        <dt>Mode</dt><dd>{{ 'Dry run (nothing is deleted)' if cfg.safety.dry_run else 'LIVE — deletions are real' }}</dd>
-        <dt>Confirm phrase</dt><dd><code>{{ cfg.safety.confirm_phrase }}</code></dd>
-        <dt>Max media per run</dt><dd>{{ cfg.safety.max_media_deletions_per_run }}</dd>
-        <dt>Max users per run</dt><dd>{{ cfg.safety.max_user_removals_per_run }}</dd>
-        <dt>Max GB per run</dt><dd>{{ cfg.safety.max_gigabytes_per_run or 'no limit' }}</dd>
-        <dt>Snapshots</dt><dd>{{ 'on' if cfg.safety.snapshot_before_delete else 'off' }}</dd>
-      </dl>
-
-      <h3>Media rules</h3>
-      <dl class="kv">
-        <dt>Unwatched threshold</dt><dd>{{ cfg.rules.media.unwatched_days }} days</dd>
-        <dt>Never-watched grace</dt><dd>{{ cfg.rules.media.never_watched_after_days }} days</dd>
-        <dt>Minimum age</dt><dd>{{ cfg.rules.media.min_age_days }} days</dd>
-        <dt>Protect airing shows</dt><dd>{{ 'yes' if cfg.rules.media.protect_continuing_series else 'no' }}</dd>
-        <dt>Protect in-progress</dt><dd>{{ 'yes' if cfg.rules.media.protect_in_progress else 'no' }}</dd>
-        <dt>Protected labels</dt><dd>{{ cfg.rules.media.protect_plex_labels | join(', ') or '—' }}</dd>
-        <dt>Protected collections</dt><dd>{{ cfg.rules.media.protect_collections | join(', ') or '—' }}</dd>
-        <dt>Protected *arr tags</dt><dd>{{ cfg.rules.media.protect_arr_tags | join(', ') or '—' }}</dd>
-      </dl>
-    </div>
-    <div>
-      <h3>Services</h3>
-      <dl class="kv">
-        <dt>Plex</dt><dd>{{ cfg.plex.url if cfg.plex.enabled else 'disabled' }}</dd>
-        <dt>Tautulli</dt><dd>{{ cfg.tautulli.url if cfg.tautulli.enabled else 'disabled' }}</dd>
-        {% for a in cfg.sonarr %}<dt>{{ a.name }}</dt><dd>{{ a.url if a.enabled else 'disabled' }}</dd>{% endfor %}
-        {% for a in cfg.radarr %}<dt>{{ a.name }}</dt><dd>{{ a.url if a.enabled else 'disabled' }}</dd>{% endfor %}
-        <dt>Seerr</dt><dd>{{ cfg.seerr.url if cfg.seerr.enabled else 'disabled' }}</dd>
-      </dl>
-
-      <h3>User rules</h3>
-      <dl class="kv">
-        <dt>Inactive threshold</dt><dd>{{ cfg.rules.users.inactive_days }} days</dd>
-        <dt>Never-active grace</dt><dd>{{ cfg.rules.users.never_active_after_days }} days</dd>
-        <dt>Plex action</dt><dd><code>{{ cfg.rules.users.plex_action }}</code></dd>
-        <dt>Remove from Seerr</dt><dd>{{ 'yes' if cfg.rules.users.remove_from_seerr else 'no' }}</dd>
-        <dt>Remove from Tautulli</dt><dd>{{ 'yes' if cfg.rules.users.remove_from_tautulli else 'no' }}</dd>
-        <dt>Always protected</dt><dd>{{ cfg.rules.users.protect_users | join(', ') or '—' }}</dd>
-      </dl>
-
-      <h3>Access</h3>
-      <dl class="kv">
-        <dt>Bind address</dt><dd>{{ cfg.app.host }}:{{ cfg.app.port }}</dd>
-        <dt>Allowed networks</dt><dd>{{ cfg.app.allowed_networks | join(', ') or 'loopback only' }}</dd>
-        <dt>Password</dt><dd>{{ 'set' if cfg.app.password else 'not set' }}</dd>
-      </dl>
-    </div>
+<div class="settings-header">
+  <div>
+    <h1>Settings</h1>
+    <p class="muted small">
+      Everything is editable here and applies immediately — no container restart.
+      Saved values live in the database under your <code>/data</code> volume.
+      {% if config_path %}A config file at <code>{{ config_path }}</code> provides
+      defaults beneath them.{% endif %}
+    </p>
   </div>
-</section>
+  <div class="settings-actions">
+    <label class="switch small-switch">
+      <input type="checkbox" id="toggle-advanced">
+      <span>Show advanced</span>
+    </label>
+    <a class="btn btn-small" href="/api/settings/export" download>Export YAML</a>
+    <button class="btn btn-small" id="btn-import">Import YAML</button>
+    <button class="btn btn-primary" id="btn-save">Save changes</button>
+  </div>
+</div>
+
+<div id="banner"></div>
+
+{% if safety_locked %}
+<div class="callout callout-warn">
+  <strong>Safety settings are locked.</strong> <code>PLEXCLEANER_LOCK_SAFETY</code> is set
+  in the environment, so the safety block below is read-only and comes from your
+  environment variables or config file. Remove that variable to edit it here.
+</div>
+{% endif %}
+
+{% if shadowed %}
+<div class="callout">
+  <strong>Saved values are overriding these environment variables:</strong>
+  {{ shadowed | join(', ') }}.
+  Changing them in Container Manager or Portainer will have no effect until you
+  <button class="link-btn" id="btn-reset">reset saved settings</button>.
+</div>
+{% endif %}
+
+<div id="settings-body"><p class="muted">Loading settings…</p></div>
 
 <section class="card">
-  <h2>Permanent keep list</h2>
+  <h2>🛡️ Permanent keep list</h2>
   <p class="muted small">Items and users here are never proposed again, whatever the rules say.</p>
   {% if protections %}
   <table class="table">
@@ -88,15 +66,124 @@
   <p class="muted">Nothing on the keep list yet.</p>
   {% endif %}
 </section>
+
+<section class="card">
+  <h2>🧰 Diagnostics</h2>
+  <dl class="kv">
+    <dt>Version</dt><dd>{{ version }}</dd>
+    <dt>Settings revision</dt><dd>{{ cfg.revision }}</dd>
+    <dt>Data directory</dt><dd><code>{{ cfg.data_path }}</code></dd>
+    <dt>Config file</dt><dd><code>{{ config_path or 'none — using environment and saved settings' }}</code></dd>
+    <dt>Listening on</dt><dd><code>{{ cfg.app.host }}:{{ cfg.app.port }}</code></dd>
+    <dt>Mode</dt><dd>{{ 'Dry run — nothing is deleted' if cfg.safety.dry_run else 'LIVE — deletions are real' }}</dd>
+  </dl>
+  <button class="btn btn-small" id="btn-test-all">Test all connections</button>
+  <div id="test-all-results"></div>
+</section>
+
+<dialog id="import-dialog" class="card">
+  <h2>Import YAML</h2>
+  <p class="muted small">This replaces all saved settings. Secrets shown as
+  <code>__unchanged__</code> keep their current value.</p>
+  <textarea id="import-text" rows="14" placeholder="Paste a config.yaml here…"></textarea>
+  <div class="confirm-row">
+    <button class="btn" id="import-cancel">Cancel</button>
+    <button class="btn btn-primary" id="import-go">Import and save</button>
+  </div>
+</dialog>
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/settings.js"></script>
 <script>
+const body = document.getElementById('settings-body');
+
+function showBanner(res) {
+  const parts = [];
+  if (res.problems && res.problems.length) {
+    parts.push(`<div class="callout callout-warn"><strong>Problems:</strong>
+      <ul>${res.problems.map(p => '<li>' + esc(p) + '</li>').join('')}</ul></div>`);
+  }
+  if (res.warnings && res.warnings.length) {
+    parts.push(`<div class="callout"><strong>Worth knowing:</strong>
+      <ul>${res.warnings.map(w => '<li>' + esc(w) + '</li>').join('')}</ul></div>`);
+  }
+  document.getElementById('banner').innerHTML = parts.join('');
+}
+
+async function boot() {
+  if (!await SettingsForm.load()) {
+    body.innerHTML = '<div class="card warn">Could not load settings.</div>';
+    return;
+  }
+  SettingsForm.render(body, null);
+  showBanner(SettingsForm.meta);
+}
+
+document.getElementById('toggle-advanced').onchange = (e) =>
+  SettingsForm.setAdvanced(e.target.checked, body);
+
+document.getElementById('btn-save').onclick = async (e) => {
+  e.target.disabled = true;
+  const wantsLive = SettingsForm.getPath('safety.dry_run') === false;
+  const extra = {};
+  if (wantsLive && {{ 'true' if cfg.safety.dry_run else 'false' }}) {
+    const typed = prompt(
+      'Turning dry run OFF means plans can permanently delete media and revoke access.\n\n' +
+      'Type {{ confirm_phrase }} to confirm:');
+    if (typed === null) { e.target.disabled = false; return; }
+    extra.confirm = typed;
+  }
+  const res = await SettingsForm.save(extra);
+  e.target.disabled = false;
+  if (!res) return;
+  toast('Settings saved — changes are live');
+  showBanner(res);
+  setTimeout(() => location.reload(), 900);
+};
+
+document.getElementById('btn-test-all').onclick = async (e) => {
+  e.target.disabled = true;
+  const res = await api('/api/test-connections');
+  e.target.disabled = false;
+  if (!res) return;
+  document.getElementById('test-all-results').innerHTML = res.results.length
+    ? res.results.map(r => `<div class="conn ${r.ok ? 'ok' : 'bad'}">
+        <strong>${esc(r.name)}</strong> — ${r.ok ? 'connected' : 'failed'}
+        ${r.version ? '<span class="muted">v' + esc(r.version) + '</span>' : ''}
+        <div class="muted small">${esc(r.detail)}</div></div>`).join('')
+    : '<p class="muted small">No services are enabled yet.</p>';
+};
+
+const resetBtn = document.getElementById('btn-reset');
+if (resetBtn) resetBtn.onclick = async () => {
+  if (!confirm('Discard all settings saved in the web UI and fall back to your ' +
+               'environment variables and config file?')) return;
+  await api('/api/settings/reset', {method: 'POST'});
+  location.reload();
+};
+
+const dialog = document.getElementById('import-dialog');
+document.getElementById('btn-import').onclick = () => dialog.showModal();
+document.getElementById('import-cancel').onclick = () => dialog.close();
+document.getElementById('import-go').onclick = async () => {
+  const res = await api('/api/settings/import', {
+    method: 'POST',
+    body: JSON.stringify({yaml: document.getElementById('import-text').value}),
+  });
+  if (!res) return;
+  dialog.close();
+  toast('Settings imported');
+  setTimeout(() => location.reload(), 700);
+};
+
 document.querySelectorAll('.unprotect').forEach(btn => btn.onclick = async () => {
   await api('/api/protections', {method: 'DELETE', body: JSON.stringify({
     kind: btn.dataset.kind, ref: btn.dataset.ref,
   })});
   location.reload();
 });
+
+boot();
 </script>
 {% endblock %}

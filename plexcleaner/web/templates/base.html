@@ -11,10 +11,12 @@
 <header class="topbar">
   <div class="brand"><span class="logo">🧹</span> PlexCleaner</div>
   <nav>
+    {% if configured %}
     <a href="/">Dashboard</a>
     <a href="/media">Media</a>
     <a href="/users">Users</a>
     <a href="/audit">Audit</a>
+    {% endif %}
     <a href="/settings">Settings</a>
   </nav>
   <div class="topbar-right">
