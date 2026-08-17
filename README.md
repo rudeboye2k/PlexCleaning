@@ -20,6 +20,23 @@ service calls, and confirming.
 
 ## Install
 
+> **First time: pick where the image comes from.**
+> This repository is **private**, so the image CI publishes to
+> `ghcr.io/rudeboye2k/plexcleaning` is private too, and a NAS pulling it will
+> fail with `unauthorized`. Choose one:
+>
+> - **Make the package public** (easiest). After the first CI run, go to your
+>   GitHub profile → **Packages** → `plexcleaning` → **Package settings** →
+>   *Change visibility* → **Public**. The image contains no secrets — all
+>   configuration lives in your `/data` volume. Then the compose files work
+>   as-is.
+> - **Authenticate on the host.** Create a classic PAT with `read:packages` and
+>   run `docker login ghcr.io -u your-github-username`. On Synology, do this
+>   over SSH before creating the project.
+> - **Build it yourself** and skip the registry entirely — see
+>   [From source](#from-source) below. This is the simplest route if you would
+>   rather not publish an image at all.
+
 ### Synology Container Manager
 
 1. In **File Station**, create the folder `docker/plexcleaner/data`.
@@ -58,11 +75,17 @@ docker run -d --name plexcleaner \
 
 ### From source
 
+Builds locally, so no registry login is needed:
+
 ```bash
 git clone https://github.com/rudeboye2k/PlexCleaning.git
 cd PlexCleaning
 docker compose -f docker-compose.build.yml up -d --build
 ```
+
+On Synology you can do the same from a Container Manager project: upload the
+repository to a shared folder, then point the project at
+`docker-compose.build.yml` instead.
 
 Or without Docker:
 
