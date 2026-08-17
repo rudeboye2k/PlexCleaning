@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Plan #{{ plan.id }} — PlexCleaner{% endblock %}
+
+{% block content %}
+<section class="card">
+  <div class="card-head">
+    <h2>Plan #{{ plan.id }} <span class="pill pill-{{ plan.status }}">{{ plan.status }}</span></h2>
+    <a href="/" class="btn btn-small">Back to dashboard</a>
+  </div>
+
+  <p class="muted">
+    Created {{ plan.created_at }} — {{ plan_summary.get('media_count', 0) }} media item(s),
+    {{ plan_summary.get('user_count', 0) }} user(s),
+    {{ '%.1f'|format((plan_summary.get('total_bytes', 0) or 0) / 1000000000) }} GB,
+    {{ plan_summary.get('step_count', 0) }} service call(s).
+  </p>
+
+  {% set run = plan_summary.get('execution') %}
+  {% if run %}
+  <div class="card {{ 'warn' if run.get('failed') else 'ok-box' }}">
+    <strong>{{ 'Simulated' if run.get('dry_run') else 'Executed' }}</strong> {{ plan.executed_at }} —
+    {{ run.get('done', 0) }} succeeded, {{ run.get('failed', 0) }} failed,
+    {{ run.get('skipped', 0) }} skipped,
+    {{ '%.1f'|format((run.get('bytes_freed', 0) or 0) / 1000000000) }} GB
+    {{ 'would be ' if run.get('dry_run') }}freed.
+  </div>
+  {% endif %}
+
+  {% if plan.status == 'draft' %}
+  <div class="execute-box">
+    <h3>Execute</h3>
+    {% if dry_run %}
+      <p class="muted">
+        The app is in <strong>dry run</strong> mode. Executing now simulates every call and writes
+        it to the audit log without touching your services. To delete for real, set
+        <code>safety.dry_run: false</code> in the config, restart, then return here.
+      </p>
+      <button id="btn-dry" class="btn btn-primary">Run simulation</button>
+    {% else %}
+      <p class="danger-text">
+        Live mode. This will permanently delete files and revoke access. Type
+        <code>{{ confirm_phrase }}</code> to confirm.
+      </p>
+      <div class="confirm-row">
+        <input id="confirm" type="text" placeholder="{{ confirm_phrase }}" autocomplete="off">
+        <button id="btn-dry" class="btn">Simulate first</button>
+        <button id="btn-live" class="btn btn-danger">Execute for real</button>
+      </div>
+    {% endif %}
+    <button id="btn-cancel" class="btn btn-small">Cancel plan</button>
+  </div>
+  {% endif %}
+
+  <div id="exec-result"></div>
+
+  <table class="table">
+    <thead><tr><th>Type</th><th>Target</th><th>Size</th><th>Steps</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for item in items %}
+      <tr>
+        <td><span class="tag">{{ item.kind }}</span></td>
+        <td><strong>{{ item.title }}</strong><div class="muted small">{{ item.ref }}</div></td>
+        <td>{{ item.size_gb if item.size_gb else '—' }}{{ ' GB' if item.size_gb else '' }}</td>
+        <td>
+          <ol class="steps">
+            {% for step in item.steps %}
+            <li><code>{{ step.service }}.{{ step.action }}</code> — {{ step.description }}</li>
+            {% endfor %}
+          </ol>
+          {% if item.result.get('steps') %}
+          <details class="muted small"><summary>Result</summary>
+            <ul>{% for s in item.result['steps'] %}
+              <li class="{{ 'ok' if s.ok else 'bad' }}">{{ s.step }} — {{ 'ok' if s.ok else s.get('error', 'failed') }}
+              {% if s.get('dry_run') %}<em>(simulated)</em>{% endif %}</li>
+            {% endfor %}</ul>
+          </details>
+          {% endif %}
+        </td>
+        <td><span class="pill pill-{{ item.status }}">{{ item.status }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function execute(live) {
+  const confirmEl = document.getElementById('confirm');
+  const body = {live: live, confirm: confirmEl ? confirmEl.value : ''};
+  const box = document.getElementById('exec-result');
+  box.innerHTML = '<p class="muted">Running…</p>';
+  const res = await api('/api/plans/{{ plan.id }}/execute', {method: 'POST', body: JSON.stringify(body)});
+  if (!res) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="card ${res.failed ? 'warn' : 'ok-box'}">
+    <strong>${res.dry_run ? 'Simulation' : 'Execution'} finished</strong> —
+    ${res.done} succeeded, ${res.failed} failed, ${res.skipped} skipped,
+    ${(res.bytes_freed / 1e9).toFixed(1)} GB ${res.dry_run ? 'would be' : ''} freed.</div>`;
+  setTimeout(() => location.reload(), 1500);
+}
+document.getElementById('btn-dry').onclick = () => execute(false);
+const liveBtn = document.getElementById('btn-live');
+if (liveBtn) liveBtn.onclick = () => {
+  if (!confirm('This permanently deletes media and revokes access. Continue?')) return;
+  execute(true);
+};
+document.getElementById('btn-cancel').onclick = async () => {
+  await api('/api/plans/{{ plan.id }}/cancel', {method: 'POST'});
+  location.reload();
+};
+</script>
+{% endblock %}

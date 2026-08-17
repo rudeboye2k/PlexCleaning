@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Settings — PlexCleaner{% endblock %}
+
+{% block content %}
+<section class="card">
+  <h2>Configuration</h2>
+  <p class="muted">
+    Settings are read from <code>{{ config_path }}</code>. Edit that file and restart the service to
+    change them — nothing here writes secrets back to disk.
+  </p>
+  {% if problems %}
+  <div class="warn"><ul>{% for p in problems %}<li>{{ p }}</li>{% endfor %}</ul></div>
+  {% endif %}
+
+  <div class="grid-2">
+    <div>
+      <h3>Safety</h3>
+      <dl class="kv">
+        <dt>Mode</dt><dd>{{ 'Dry run (nothing is deleted)' if cfg.safety.dry_run else 'LIVE — deletions are real' }}</dd>
+        <dt>Confirm phrase</dt><dd><code>{{ cfg.safety.confirm_phrase }}</code></dd>
+        <dt>Max media per run</dt><dd>{{ cfg.safety.max_media_deletions_per_run }}</dd>
+        <dt>Max users per run</dt><dd>{{ cfg.safety.max_user_removals_per_run }}</dd>
+        <dt>Max GB per run</dt><dd>{{ cfg.safety.max_gigabytes_per_run or 'no limit' }}</dd>
+        <dt>Snapshots</dt><dd>{{ 'on' if cfg.safety.snapshot_before_delete else 'off' }}</dd>
+      </dl>
+
+      <h3>Media rules</h3>
+      <dl class="kv">
+        <dt>Unwatched threshold</dt><dd>{{ cfg.rules.media.unwatched_days }} days</dd>
+        <dt>Never-watched grace</dt><dd>{{ cfg.rules.media.never_watched_after_days }} days</dd>
+        <dt>Minimum age</dt><dd>{{ cfg.rules.media.min_age_days }} days</dd>
+        <dt>Protect airing shows</dt><dd>{{ 'yes' if cfg.rules.media.protect_continuing_series else 'no' }}</dd>
+        <dt>Protect in-progress</dt><dd>{{ 'yes' if cfg.rules.media.protect_in_progress else 'no' }}</dd>
+        <dt>Protected labels</dt><dd>{{ cfg.rules.media.protect_plex_labels | join(', ') or '—' }}</dd>
+        <dt>Protected collections</dt><dd>{{ cfg.rules.media.protect_collections | join(', ') or '—' }}</dd>
+        <dt>Protected *arr tags</dt><dd>{{ cfg.rules.media.protect_arr_tags | join(', ') or '—' }}</dd>
+      </dl>
+    </div>
+    <div>
+      <h3>Services</h3>
+      <dl class="kv">
+        <dt>Plex</dt><dd>{{ cfg.plex.url if cfg.plex.enabled else 'disabled' }}</dd>
+        <dt>Tautulli</dt><dd>{{ cfg.tautulli.url if cfg.tautulli.enabled else 'disabled' }}</dd>
+        {% for a in cfg.sonarr %}<dt>{{ a.name }}</dt><dd>{{ a.url if a.enabled else 'disabled' }}</dd>{% endfor %}
+        {% for a in cfg.radarr %}<dt>{{ a.name }}</dt><dd>{{ a.url if a.enabled else 'disabled' }}</dd>{% endfor %}
+        <dt>Seerr</dt><dd>{{ cfg.seerr.url if cfg.seerr.enabled else 'disabled' }}</dd>
+      </dl>
+
+      <h3>User rules</h3>
+      <dl class="kv">
+        <dt>Inactive threshold</dt><dd>{{ cfg.rules.users.inactive_days }} days</dd>
+        <dt>Never-active grace</dt><dd>{{ cfg.rules.users.never_active_after_days }} days</dd>
+        <dt>Plex action</dt><dd><code>{{ cfg.rules.users.plex_action }}</code></dd>
+        <dt>Remove from Seerr</dt><dd>{{ 'yes' if cfg.rules.users.remove_from_seerr else 'no' }}</dd>
+        <dt>Remove from Tautulli</dt><dd>{{ 'yes' if cfg.rules.users.remove_from_tautulli else 'no' }}</dd>
+        <dt>Always protected</dt><dd>{{ cfg.rules.users.protect_users | join(', ') or '—' }}</dd>
+      </dl>
+
+      <h3>Access</h3>
+      <dl class="kv">
+        <dt>Bind address</dt><dd>{{ cfg.app.host }}:{{ cfg.app.port }}</dd>
+        <dt>Allowed networks</dt><dd>{{ cfg.app.allowed_networks | join(', ') or 'loopback only' }}</dd>
+        <dt>Password</dt><dd>{{ 'set' if cfg.app.password else 'not set' }}</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Permanent keep list</h2>
+  <p class="muted small">Items and users here are never proposed again, whatever the rules say.</p>
+  {% if protections %}
+  <table class="table">
+    <thead><tr><th>Type</th><th>Name</th><th>Reference</th><th>Added</th><th></th></tr></thead>
+    <tbody>
+      {% for p in protections %}
+      <tr>
+        <td><span class="tag">{{ p.kind }}</span></td>
+        <td>{{ p.label or '—' }}</td>
+        <td class="muted small"><code>{{ p.ref }}</code></td>
+        <td class="muted small">{{ p.created_at }}</td>
+        <td><button class="btn btn-small unprotect" data-kind="{{ p.kind }}" data-ref="{{ p.ref }}">Remove</button></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">Nothing on the keep list yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.unprotect').forEach(btn => btn.onclick = async () => {
+  await api('/api/protections', {method: 'DELETE', body: JSON.stringify({
+    kind: btn.dataset.kind, ref: btn.dataset.ref,
+  })});
+  location.reload();
+});
+</script>
+{% endblock %}

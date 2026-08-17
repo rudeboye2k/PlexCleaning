@@ -1,0 +1,160 @@
+# PlexCleaner configuration
+#
+# Any value may be supplied as ${ENV_VAR} and will be read from the environment
+# (or the .env file next to this one). Keep real secrets in .env, not here.
+
+app:
+  # Bind address for the web UI. Set to your internal LAN IP so the service is
+  # never reachable from outside. 0.0.0.0 is accepted but strongly discouraged.
+  host: "10.12.128.4"
+  port: 8585
+  # Extra CIDRs allowed to reach the UI. The bind address' own /32 and the
+  # loopback range are always allowed. Anything else gets a 403.
+  allowed_networks:
+    - "10.12.128.0/24"
+  # Session cookie signing key. Generate with: openssl rand -hex 32
+  secret_key: "${PLEXCLEANER_SECRET_KEY}"
+  # Password for the UI. Leave empty to disable auth (only sane on a trusted
+  # host where allowed_networks is tight).
+  password: "${PLEXCLEANER_PASSWORD}"
+  session_hours: 12
+  data_dir: "./data"
+  log_level: "INFO"
+
+safety:
+  # Master switch. While true, NOTHING is ever deleted — every action is
+  # simulated and written to the audit log as a dry run. Flip to false only
+  # once you have reviewed a few plans and trust the output.
+  dry_run: true
+  # Executing a plan requires typing this word into the UI.
+  confirm_phrase: "DELETE"
+  # Hard ceilings per execution run. A plan exceeding these is refused.
+  max_media_deletions_per_run: 25
+  max_user_removals_per_run: 5
+  # Refuse to execute if the plan would free more than this (0 = no limit).
+  max_gigabytes_per_run: 2000
+  # Write a JSON snapshot of every item before deleting it, so it can be
+  # re-added later. Stored under <data_dir>/backups/.
+  snapshot_before_delete: true
+  # Abort the rest of a run after this many consecutive step failures.
+  abort_after_failures: 5
+
+plex:
+  enabled: true
+  url: "http://10.12.128.4:32400"
+  token: "${PLEX_TOKEN}"
+  verify_ssl: false
+  timeout: 60
+  # Libraries to consider. Empty list = all movie and show libraries.
+  libraries: []
+  # Never touch anything in these libraries.
+  exclude_libraries:
+    - "Home Videos"
+    - "Kids"
+
+tautulli:
+  enabled: true
+  url: "http://10.12.128.4:8181"
+  api_key: "${TAUTULLI_API_KEY}"
+  verify_ssl: false
+  timeout: 60
+  # Also purge watch history for items/users that get removed.
+  purge_history_on_delete: false
+
+sonarr:
+  # Multiple instances are supported (e.g. an HD and a 4K instance).
+  - name: "sonarr"
+    enabled: true
+    url: "http://10.12.128.4:8989"
+    api_key: "${SONARR_API_KEY}"
+    verify_ssl: false
+    timeout: 60
+    # Delete the files on disk as well as the series entry.
+    delete_files: true
+    # Add to the import-list exclusion so automation cannot re-add it.
+    add_import_exclusion: true
+
+radarr:
+  - name: "radarr"
+    enabled: true
+    url: "http://10.12.128.4:7878"
+    api_key: "${RADARR_API_KEY}"
+    verify_ssl: false
+    timeout: 60
+    delete_files: true
+    add_import_exclusion: true
+
+seerr:
+  # Overseerr / Jellyseerr / Seerr — all expose the same /api/v1 surface.
+  enabled: true
+  url: "http://10.12.128.4:5055"
+  api_key: "${SEERR_API_KEY}"
+  verify_ssl: false
+  timeout: 60
+  # Remove the media entry from Seerr so it shows as requestable again.
+  remove_media_entry: true
+  # Ask Seerr to delete the underlying file too. Leave false when Sonarr and
+  # Radarr are enabled — they already own file deletion, and doing both is
+  # redundant.
+  delete_file_via_seerr: false
+
+rules:
+  media:
+    # An item becomes a candidate when nobody has watched it in this many days.
+    unwatched_days: 365
+    # Items never watched by anyone are candidates once they have been in the
+    # library at least this long. Protects a fresh download nobody got to yet.
+    never_watched_after_days: 180
+    # Never propose anything added more recently than this, watched or not.
+    min_age_days: 30
+    # Keep a show while Sonarr still has it monitored and its status is
+    # "continuing" — i.e. it is still airing new episodes.
+    protect_continuing_series: true
+    # Keep items with any of these Plex labels.
+    protect_plex_labels: ["keep", "favorite", "archive"]
+    # Keep items in any of these Plex collections.
+    protect_collections: ["Christmas", "Comfort Watches"]
+    # Keep items carrying any of these Sonarr/Radarr tags.
+    protect_arr_tags: ["keep", "permanent"]
+    # Keep an item if it is partially watched by anyone (in progress).
+    protect_in_progress: true
+    # Keep an item requested in Seerr by a still-active user within this many
+    # days. 0 disables the check.
+    protect_recent_seerr_requests_days: 90
+    # Only consider items in these Plex libraries. Empty = all eligible.
+    include_libraries: []
+    # Minimum size in MB for an item to be worth proposing. 0 = no minimum.
+    min_size_mb: 0
+
+  users:
+    # A user becomes a candidate after this many days with no playback and no
+    # Seerr login.
+    inactive_days: 180
+    # A user who has never watched anything is a candidate this long after
+    # their account was first seen.
+    never_active_after_days: 60
+    # Never propose these users, by username or email.
+    protect_users:
+      - "your.admin.account@example.com"
+    # Never propose the server owner / admin accounts.
+    protect_admins: true
+    # Never propose Plex Home users (family accounts sharing your subscription).
+    protect_home_users: true
+    # What to do with a stale user in Plex:
+    #   unshare        - revoke library access, stay friends (reversible, safest)
+    #   remove_friend  - remove the sharing relationship entirely
+    #   none           - leave Plex alone, only act in the other services
+    plex_action: "unshare"
+    # Also delete the user from Seerr.
+    remove_from_seerr: true
+    # Also delete the user (and their history) from Tautulli. Destroys stats.
+    remove_from_tautulli: false
+
+schedule:
+  # Automatic scans. Actions are never taken automatically — a scheduled scan
+  # only refreshes the candidate lists for you to review.
+  scan_enabled: true
+  scan_cron_hour: 4
+  scan_cron_minute: 30
+  # Days of audit log and old scans to retain.
+  retention_days: 365

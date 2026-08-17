@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "plexcleaner"
+version = "1.0.0"
+description = "Cross-reference Plex, Tautulli, Sonarr, Radarr and Seerr to find and remove stale media and inactive users"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[project.scripts]
+plexcleaner = "plexcleaner.cli:main"
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+include = ["plexcleaner*"]
+
+[tool.setuptools.package-data]
+plexcleaner = ["web/templates/*.html", "web/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

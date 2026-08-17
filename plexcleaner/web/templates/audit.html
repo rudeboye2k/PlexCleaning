@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Audit log — PlexCleaner{% endblock %}
+
+{% block content %}
+<section class="card">
+  <div class="card-head">
+    <h2>Audit log</h2>
+    <input id="filter" type="search" placeholder="Filter…">
+  </div>
+  <p class="muted small">Every action this tool takes or simulates, newest first.</p>
+  <table class="table" id="audit-table">
+    <thead><tr><th>When</th><th>Service</th><th>Action</th><th>Target</th><th>Mode</th><th>Result</th><th>Detail</th></tr></thead>
+    <tbody>
+      {% for e in entries %}
+      <tr>
+        <td class="muted small">{{ e.ts }}</td>
+        <td><span class="tag">{{ e.service }}</span></td>
+        <td>{{ e.action }}</td>
+        <td class="muted">{{ e.target or '—' }}</td>
+        <td>{{ 'dry run' if e.dry_run else 'LIVE' }}</td>
+        <td class="{{ 'ok' if e.ok else 'bad' }}">{{ 'ok' if e.ok else 'failed' }}</td>
+        <td class="muted small"><code>{{ e.detail | tojson }}</code></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if not entries %}<p class="muted">Nothing logged yet.</p>{% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('filter').oninput = debounce((e) => {
+  const q = e.target.value.toLowerCase();
+  document.querySelectorAll('#audit-table tbody tr').forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}, 200);
+</script>
+{% endblock %}

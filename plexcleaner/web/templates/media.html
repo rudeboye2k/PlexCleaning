@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Media — PlexCleaner{% endblock %}
+
+{% block content %}
+<section class="card">
+  <div class="card-head">
+    <h2>Stale media</h2>
+    <div class="filters">
+      <select id="f-verdict">
+        <option value="candidate">Candidates</option>
+        <option value="keep">Kept</option>
+        <option value="protected">Protected</option>
+        <option value="all">Everything</option>
+      </select>
+      <select id="f-kind">
+        <option value="">Movies &amp; shows</option>
+        <option value="movie">Movies</option>
+        <option value="show">Shows</option>
+      </select>
+      <select id="f-library"><option value="">All libraries</option></select>
+      <select id="f-sort">
+        <option value="size">Largest first</option>
+        <option value="watched">Longest unwatched</option>
+        <option value="added">Oldest added</option>
+        <option value="title">Title</option>
+      </select>
+      <input id="f-search" type="search" placeholder="Search title…">
+    </div>
+  </div>
+
+  <div class="selection-bar">
+    <label><input type="checkbox" id="select-all"> Select all shown</label>
+    <span id="selection-summary" class="muted">Nothing selected</span>
+    <div class="spacer"></div>
+    <button id="btn-protect" class="btn" disabled>Never suggest again</button>
+    <button id="btn-plan" class="btn btn-primary" disabled>Build deletion plan</button>
+  </div>
+
+  <div id="table-wrap"><p class="muted">Loading…</p></div>
+  <div class="pager">
+    <button id="prev" class="btn btn-small">← Previous</button>
+    <span id="page-info" class="muted"></span>
+    <button id="next" class="btn btn-small">Next →</button>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const state = {offset: 0, limit: 100, total: 0, selected: new Set(), rows: [], scanId: null};
+
+function params() {
+  const q = new URLSearchParams({
+    verdict: val('f-verdict'), kind: val('f-kind'), library: val('f-library'),
+    sort: val('f-sort'), search: val('f-search'),
+    limit: state.limit, offset: state.offset,
+  });
+  return '/api/media?' + q.toString();
+}
+
+async function load() {
+  const data = await api(params());
+  if (!data) return;
+  state.rows = data.items;
+  state.total = data.total;
+  state.scanId = data.scan_id;
+  fillLibraries(data.libraries || []);
+  render();
+}
+
+function fillLibraries(libs) {
+  const sel = document.getElementById('f-library');
+  if (sel.dataset.filled) return;
+  libs.forEach(l => { if (!l) return; const o = document.createElement('option'); o.value = l; o.textContent = l; sel.appendChild(o); });
+  sel.dataset.filled = '1';
+}
+
+function render() {
+  const wrap = document.getElementById('table-wrap');
+  if (!state.rows.length) {
+    wrap.innerHTML = '<p class="muted">Nothing matches. Run a scan from the dashboard if this is unexpected.</p>';
+  } else {
+    wrap.innerHTML = `<table class="table">
+      <thead><tr>
+        <th></th><th>Title</th><th>Library</th><th>Size</th>
+        <th>Last watched</th><th>Added</th><th>Plays</th><th>Services</th><th>Why</th>
+      </tr></thead>
+      <tbody>${state.rows.map(rowHtml).join('')}</tbody></table>`;
+    wrap.querySelectorAll('input[type=checkbox][data-id]').forEach(cb => {
+      cb.checked = state.selected.has(Number(cb.dataset.id));
+      cb.onchange = () => {
+        const id = Number(cb.dataset.id);
+        cb.checked ? state.selected.add(id) : state.selected.delete(id);
+        updateSelection();
+      };
+    });
+  }
+  document.getElementById('page-info').textContent =
+    `${state.total ? state.offset + 1 : 0}–${Math.min(state.offset + state.limit, state.total)} of ${state.total}`;
+  document.getElementById('prev').disabled = state.offset === 0;
+  document.getElementById('next').disabled = state.offset + state.limit >= state.total;
+  updateSelection();
+}
+
+function rowHtml(r) {
+  const services = [
+    r.arr ? `<span class="tag">${esc(r.arr)}</span>` : '',
+    r.seerr_media_id ? `<span class="tag">seerr#${r.seerr_media_id}</span>` : '',
+    r.arr_status ? `<span class="tag tag-muted">${esc(r.arr_status)}</span>` : '',
+  ].join(' ');
+  return `<tr class="verdict-${esc(r.verdict)}">
+    <td><input type="checkbox" data-id="${r.id}"></td>
+    <td><strong>${esc(r.title)}</strong> ${r.year ? '<span class="muted">(' + r.year + ')</span>' : ''}
+        ${r.kind === 'show' ? `<span class="muted small">${r.episode_count} eps</span>` : ''}</td>
+    <td class="muted">${esc(r.library || '—')}</td>
+    <td>${r.size_gb ? r.size_gb + ' GB' : '<span class="muted">—</span>'}</td>
+    <td>${r.last_watched_at ? fmtDate(r.last_watched_at) : '<span class="never">never</span>'}</td>
+    <td class="muted">${fmtDate(r.added_at)}</td>
+    <td>${r.play_count}${r.watcher_count ? ` <span class="muted small">/ ${r.watcher_count} users</span>` : ''}</td>
+    <td>${services || '<span class="muted">—</span>'}</td>
+    <td class="muted small">${r.reasons.map(esc).join('<br>')}</td>
+  </tr>`;
+}
+
+function updateSelection() {
+  const n = state.selected.size;
+  const gb = state.rows.filter(r => state.selected.has(r.id)).reduce((a, r) => a + (r.size_gb || 0), 0);
+  document.getElementById('selection-summary').textContent =
+    n ? `${n} selected (${gb.toFixed(1)} GB on this page)` : 'Nothing selected';
+  document.getElementById('btn-plan').disabled = n === 0;
+  document.getElementById('btn-protect').disabled = n === 0;
+}
+
+document.getElementById('select-all').onchange = (e) => {
+  state.rows.forEach(r => e.target.checked ? state.selected.add(r.id) : state.selected.delete(r.id));
+  render();
+};
+document.getElementById('btn-plan').onclick = async () => {
+  const res = await api('/api/plans', {method: 'POST', body: JSON.stringify({
+    scan_id: state.scanId, media_ids: [...state.selected], user_ids: [],
+  })});
+  if (res) location.href = '/plans/' + res.plan_id;
+};
+document.getElementById('btn-protect').onclick = async () => {
+  const chosen = state.rows.filter(r => state.selected.has(r.id));
+  for (const r of chosen) {
+    await api('/api/protections', {method: 'POST', body: JSON.stringify({
+      kind: 'media', ref: r.ref, label: r.title,
+    })});
+  }
+  toast(`${chosen.length} item(s) added to the permanent keep list`);
+  state.selected.clear();
+  load();
+};
+document.getElementById('prev').onclick = () => { state.offset = Math.max(0, state.offset - state.limit); load(); };
+document.getElementById('next').onclick = () => { state.offset += state.limit; load(); };
+['f-verdict','f-kind','f-library','f-sort'].forEach(id =>
+  document.getElementById(id).onchange = () => { state.offset = 0; load(); });
+document.getElementById('f-search').oninput = debounce(() => { state.offset = 0; load(); }, 350);
+
+load();
+</script>
+{% endblock %}

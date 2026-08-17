@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}PlexCleaner{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>🧹</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">🧹</span> PlexCleaner</div>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/media">Media</a>
+    <a href="/users">Users</a>
+    <a href="/audit">Audit</a>
+    <a href="/settings">Settings</a>
+  </nav>
+  <div class="topbar-right">
+    {% if dry_run %}
+      <span class="badge badge-safe" title="Nothing will actually be deleted">DRY RUN</span>
+    {% else %}
+      <span class="badge badge-live" title="Deletions are real">LIVE MODE</span>
+    {% endif %}
+    {% if auth_enabled %}
+      <form method="post" action="/logout" class="inline"><button class="link-btn">Log out</button></form>
+    {% endif %}
+  </div>
+</header>
+
+<main>
+  {% block content %}{% endblock %}
+</main>
+
+<footer>
+  <span>PlexCleaner v{{ version }}</span>
+  {% if scan %}<span>Last scan #{{ scan.id }} — {{ scan.finished_at or scan.started_at }}</span>{% endif %}
+</footer>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/static/app.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

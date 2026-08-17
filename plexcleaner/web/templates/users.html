@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Users — PlexCleaner{% endblock %}
+
+{% block content %}
+<section class="card">
+  <div class="card-head">
+    <h2>Users</h2>
+    <select id="f-verdict">
+      <option value="candidate">Inactive candidates</option>
+      <option value="keep">Active</option>
+      <option value="protected">Protected</option>
+      <option value="all">Everyone</option>
+    </select>
+  </div>
+
+  <p class="muted small">
+    Removing a user runs the action set in <code>rules.users</code>: Plex is
+    <strong>{{ cfg.rules.users.plex_action if cfg else 'as configured' }}</strong>,
+    Seerr and Tautulli follow their own toggles. Unsharing is reversible; removing a friend is not.
+  </p>
+
+  <div class="selection-bar">
+    <label><input type="checkbox" id="select-all"> Select all shown</label>
+    <span id="selection-summary" class="muted">Nothing selected</span>
+    <div class="spacer"></div>
+    <button id="btn-protect" class="btn" disabled>Never suggest again</button>
+    <button id="btn-plan" class="btn btn-primary" disabled>Build removal plan</button>
+  </div>
+
+  <div id="table-wrap"><p class="muted">Loading…</p></div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const state = {selected: new Set(), rows: [], scanId: null};
+
+async function load() {
+  const data = await api('/api/users?verdict=' + val('f-verdict'));
+  if (!data) return;
+  state.rows = data.items;
+  state.scanId = data.scan_id;
+  render();
+}
+
+function render() {
+  const wrap = document.getElementById('table-wrap');
+  if (!state.rows.length) {
+    wrap.innerHTML = '<p class="muted">No users match this filter.</p>';
+  } else {
+    wrap.innerHTML = `<table class="table">
+      <thead><tr>
+        <th></th><th>User</th><th>Email</th><th>Last watched</th><th>Last Seerr login</th>
+        <th>Plays</th><th>Requests</th><th>Accounts</th><th>Why</th>
+      </tr></thead>
+      <tbody>${state.rows.map(rowHtml).join('')}</tbody></table>`;
+    wrap.querySelectorAll('input[type=checkbox][data-id]').forEach(cb => {
+      cb.checked = state.selected.has(Number(cb.dataset.id));
+      cb.onchange = () => {
+        const id = Number(cb.dataset.id);
+        cb.checked ? state.selected.add(id) : state.selected.delete(id);
+        updateSelection();
+      };
+    });
+  }
+  updateSelection();
+}
+
+function rowHtml(r) {
+  const badges = [
+    r.is_admin ? '<span class="tag tag-warn">admin</span>' : '',
+    r.is_home ? '<span class="tag">home</span>' : '',
+    r.seerr_user_id ? `<span class="tag">seerr#${r.seerr_user_id}</span>` : '',
+    r.tautulli_user_id ? `<span class="tag tag-muted">tautulli</span>` : '',
+  ].join(' ');
+  const disabled = (r.is_admin || r.verdict === 'protected') ? 'disabled' : '';
+  return `<tr class="verdict-${esc(r.verdict)}">
+    <td><input type="checkbox" data-id="${r.id}" ${disabled}></td>
+    <td><strong>${esc(r.username)}</strong></td>
+    <td class="muted">${esc(r.email || '—')}</td>
+    <td>${r.last_seen_at ? fmtDate(r.last_seen_at) : '<span class="never">never</span>'}</td>
+    <td>${r.last_login_at ? fmtDate(r.last_login_at) : '<span class="muted">—</span>'}</td>
+    <td>${r.plays}</td>
+    <td>${r.request_count}</td>
+    <td>${badges || '<span class="muted">—</span>'}</td>
+    <td class="muted small">${r.reasons.map(esc).join('<br>')}</td>
+  </tr>`;
+}
+
+function updateSelection() {
+  const n = state.selected.size;
+  document.getElementById('selection-summary').textContent = n ? `${n} selected` : 'Nothing selected';
+  document.getElementById('btn-plan').disabled = n === 0;
+  document.getElementById('btn-protect').disabled = n === 0;
+}
+
+document.getElementById('select-all').onchange = (e) => {
+  state.rows.forEach(r => {
+    if (r.is_admin || r.verdict === 'protected') return;
+    e.target.checked ? state.selected.add(r.id) : state.selected.delete(r.id);
+  });
+  render();
+};
+document.getElementById('btn-plan').onclick = async () => {
+  const res = await api('/api/plans', {method: 'POST', body: JSON.stringify({
+    scan_id: state.scanId, media_ids: [], user_ids: [...state.selected],
+  })});
+  if (res) location.href = '/plans/' + res.plan_id;
+};
+document.getElementById('btn-protect').onclick = async () => {
+  const chosen = state.rows.filter(r => state.selected.has(r.id));
+  for (const r of chosen) {
+    await api('/api/protections', {method: 'POST', body: JSON.stringify({
+      kind: 'user', ref: r.ref, label: r.username,
+    })});
+  }
+  toast(`${chosen.length} user(s) added to the permanent keep list`);
+  state.selected.clear();
+  load();
+};
+document.getElementById('f-verdict').onchange = load;
+load();
+</script>
+{% endblock %}

@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — PlexCleaner{% endblock %}
+
+{% block content %}
+{% if problems %}
+<div class="card warn">
+  <h2>Configuration needs attention</h2>
+  <ul>{% for p in problems %}<li>{{ p }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+{% if not dry_run %}
+<div class="card danger">
+  <strong>Live mode is on.</strong> Executing a plan will permanently delete media and revoke access.
+  Set <code>safety.dry_run: true</code> in the config to go back to simulation.
+</div>
+{% endif %}
+
+<section class="stats">
+  <div class="stat">
+    <span class="stat-value">{{ scan_stats.get('media_total', 0) }}</span>
+    <span class="stat-label">Items tracked</span>
+  </div>
+  <div class="stat stat-accent">
+    <span class="stat-value">{{ scan_stats.get('media_candidates', 0) }}</span>
+    <span class="stat-label">Stale media</span>
+  </div>
+  <div class="stat">
+    <span class="stat-value">{{ '%.1f'|format((scan_stats.get('reclaimable_bytes', 0) or 0) / 1000000000) }} GB</span>
+    <span class="stat-label">Reclaimable</span>
+  </div>
+  <div class="stat">
+    <span class="stat-value">{{ scan_stats.get('users_total', 0) }}</span>
+    <span class="stat-label">Users</span>
+  </div>
+  <div class="stat stat-accent">
+    <span class="stat-value">{{ scan_stats.get('user_candidates', 0) }}</span>
+    <span class="stat-label">Inactive users</span>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Scan</h2>
+    <div>
+      <button id="btn-test" class="btn">Test connections</button>
+      <button id="btn-scan" class="btn btn-primary">Run scan now</button>
+    </div>
+  </div>
+  <p id="scan-state" class="muted">
+    {% if scan %}
+      Last scan #{{ scan.id }} finished {{ scan.finished_at }} — status {{ scan.status }}.
+    {% else %}
+      No scan has run yet. Start one to build the candidate lists.
+    {% endif %}
+  </p>
+  {% if scan and scan.errors and scan.errors != '[]' %}
+    <details class="muted"><summary>Scan reported non-fatal errors</summary><pre>{{ scan.errors }}</pre></details>
+  {% endif %}
+  <div id="test-results"></div>
+</section>
+
+<section class="card">
+  <h2>Recent plans</h2>
+  {% if recent_plans %}
+  <table class="table">
+    <thead><tr><th>#</th><th>Created</th><th>Status</th><th>Mode</th><th>Summary</th><th></th></tr></thead>
+    <tbody>
+      {% for p in recent_plans %}
+      <tr>
+        <td>{{ p.id }}</td>
+        <td>{{ p.created_at }}</td>
+        <td><span class="pill pill-{{ p.status }}">{{ p.status }}</span></td>
+        <td>{{ 'dry run' if p.dry_run else 'live' }}</td>
+        <td class="muted small">{{ p.summary }}</td>
+        <td><a href="/plans/{{ p.id }}" class="btn btn-small">Open</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No plans yet. Select candidates on the Media or Users page to build one.</p>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('btn-scan').onclick = async (e) => {
+  e.target.disabled = true;
+  const res = await api('/api/scan', {method: 'POST'});
+  if (res) { toast('Scan started'); pollScan(); } else { e.target.disabled = false; }
+};
+document.getElementById('btn-test').onclick = async (e) => {
+  e.target.disabled = true;
+  const res = await api('/api/test-connections');
+  e.target.disabled = false;
+  if (!res) return;
+  document.getElementById('test-results').innerHTML = res.results.map(r =>
+    `<div class="conn ${r.ok ? 'ok' : 'bad'}"><strong>${esc(r.name)}</strong> — ${r.ok ? 'connected' : 'failed'}
+     ${r.version ? '<span class="muted">v' + esc(r.version) + '</span>' : ''}
+     <div class="muted small">${esc(r.detail)}</div></div>`).join('');
+};
+async function pollScan() {
+  const state = document.getElementById('scan-state');
+  const timer = setInterval(async () => {
+    const s = await api('/api/status');
+    if (!s) return clearInterval(timer);
+    if (s.runner.running) { state.textContent = 'Scanning…'; return; }
+    clearInterval(timer);
+    state.textContent = s.runner.error ? ('Scan failed: ' + s.runner.error) : 'Scan complete — reloading…';
+    if (!s.runner.error) setTimeout(() => location.reload(), 800);
+  }, 2000);
+}
+{% if runner.running %}pollScan();{% endif %}
+</script>
+{% endblock %}
