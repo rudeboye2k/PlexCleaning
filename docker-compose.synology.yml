@@ -20,7 +20,7 @@ services:
 
     volumes:
       # Adjust volume1 if your shared folder lives on another volume.
-      - /volume1/docker/plexcleaner/data:/data
+      - /volume2/docker/plexcleaner/data:/data
 
     environment:
       # IMPORTANT on Synology: these must match the owner of the folder above,
