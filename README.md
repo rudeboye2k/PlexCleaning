@@ -340,6 +340,15 @@ badges all follow from that.
 
 ## Troubleshooting
 
+**`Error response from daemon: Head "https://ghcr.io/v2/.../manifests/latest"`
+— unauthorized / denied.** The image was built and published, but this
+repository is private, so its GHCR package is private too and an
+unauthenticated pull is rejected. Make the package public at
+`https://github.com/users/<you>/packages/container/plexcleaning/settings` →
+*Change visibility* → **Public** (the image holds no secrets; your repository
+stays private either way), or `docker login ghcr.io` on the host with a
+`read:packages` token, or build locally with `docker-compose.build.yml`.
+
 **Container will not start / cannot write the database.** `PUID`/`PGID` do not
 match the owner of your data folder. Run `id your-username` on the NAS and set
 them accordingly. The entrypoint logs a warning naming the directory it could
