@@ -11,6 +11,7 @@ opening a browser.
     plexcleaner report --kind movie      list current candidates
     plexcleaner plan --top 10            build a plan from the biggest candidates
     plexcleaner apply <id> --live        execute a plan
+    plexcleaner reset-password           locked out of the web UI
 """
 from __future__ import annotations
 
@@ -92,6 +93,26 @@ def cmd_reset_settings(cfg: Config, db: Database, store: SettingsStore, args) ->
     store.reset(actor="cli")
     print("Saved settings cleared. Configuration now comes from the config file and "
           "environment variables.")
+    return 0
+
+
+def cmd_reset_password(cfg: Config, db: Database, store: SettingsStore, args) -> int:
+    """Lockout recovery: clear or replace the web UI password only."""
+    updated = store.reset_password(args.set or "", actor="cli")
+
+    if args.set:
+        print("Web UI password changed. Sign in with the new password.")
+    elif updated.app.password:
+        # An environment or config-file password was being shadowed by the
+        # saved one; now that it is gone, that lower layer applies again.
+        print("Saved password cleared. The password now comes from your "
+              "environment or config file — sign in with that one.")
+    else:
+        print("Web UI password cleared. The login prompt is now disabled.\n"
+              "Set a new one on the Settings page, or with:\n"
+              "  plexcleaner reset-password --set 'your-new-password'")
+
+    print("\nEverything else — service URLs, API keys, rules, history — is untouched.")
     return 0
 
 
@@ -260,6 +281,16 @@ def cmd_serve(cfg: Config, db: Database, store: SettingsStore, args) -> int:
     from .scheduler import start_scheduler
     from .web.app import create_app
 
+    # Lockout recovery for platforms where editing an environment variable is
+    # easier than opening a shell, which is most NAS container UIs.
+    if store.apply_password_escape_hatch():
+        cfg = store.current()
+        print("  PLEXCLEANER_RESET_PASSWORD was set: the saved web UI password "
+              "has been cleared.\n"
+              "  Set a new password on the Settings page, then REMOVE that "
+              "variable — while it is set,\n"
+              "  the saved password is cleared on every restart.")
+
     app = create_app(store, db)
     start_scheduler(store, db, app.state.runner)
 
@@ -302,6 +333,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("reset-settings", help="discard web-UI settings and fall back to env/file"
                    ).set_defaults(fn=cmd_reset_settings)
+
+    p = sub.add_parser("reset-password",
+                       help="locked out? clear or change the web UI password only")
+    p.add_argument("--set", default="", metavar="PASSWORD",
+                   help="set this password instead of clearing it")
+    p.set_defaults(fn=cmd_reset_password)
 
     sub.add_parser("test", help="check connectivity to every configured service"
                    ).set_defaults(fn=cmd_test)

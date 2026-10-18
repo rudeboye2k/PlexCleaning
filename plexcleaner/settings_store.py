@@ -331,6 +331,51 @@ class SettingsStore:
         self.db.audit(service="settings", action="reset", actor=actor, dry_run=True, ok=True)
         return self.current()
 
+    def reset_password(self, new_password: str = "", *, actor: str = "cli") -> Config:
+        """Clear or replace the saved web UI password, touching nothing else.
+
+        This is the lockout escape hatch. `reset()` would also work, but it
+        discards every service URL, API key and rule along the way, which is a
+        brutal price for a forgotten password.
+
+        Clearing the saved value also un-shadows PLEXCLEANER_PASSWORD, so an
+        environment-supplied password starts applying again.
+        """
+        with self._lock:
+            saved = self.saved()
+            app = dict(saved.get("app") or {})
+            had = bool(app.get("password"))
+            if new_password:
+                app["password"] = new_password
+            else:
+                app.pop("password", None)
+            saved["app"] = app
+            self.db.set_setting(SETTINGS_KEY, saved)
+            self.db.set_setting(REVISION_KEY, self.revision() + 1)
+            self._cached = None
+
+        self.db.audit(service="settings", action="password_reset", actor=actor,
+                      dry_run=True, ok=True,
+                      detail={"had_saved_password": had,
+                              "new_password_set": bool(new_password)})
+        log.warning("web UI password was %s by %s",
+                    "replaced" if new_password else "cleared", actor)
+        return self.current()
+
+    def apply_password_escape_hatch(self) -> bool:
+        """Honour PLEXCLEANER_RESET_PASSWORD on startup.
+
+        For people whose container platform makes editing environment variables
+        easier than opening a shell — which is most NAS web UIs. Returns True
+        when it acted, so the caller can tell the user to remove the variable.
+        """
+        if not _bool(self.environ.get("PLEXCLEANER_RESET_PASSWORD", "")):
+            return False
+        if not (self.saved().get("app") or {}).get("password"):
+            return False
+        self.reset_password(actor="env:PLEXCLEANER_RESET_PASSWORD")
+        return True
+
     def import_yaml(self, text: str, *, actor: str = "web") -> Config:
         try:
             data = yaml.safe_load(text) or {}

@@ -155,6 +155,7 @@ All optional — the wizard can collect everything instead.
 | `PLEXCLEANER_PASSWORD` | Web UI password |
 | `PLEXCLEANER_TRUST_PROXY` | Set when a reverse proxy you control sits in front |
 | `PLEXCLEANER_LOCK_SAFETY` | Stops the web UI from ever leaving dry-run mode |
+| `PLEXCLEANER_RESET_PASSWORD` | One-shot lockout recovery: clears the saved password on boot |
 | `PLEX_URL` / `PLEX_TOKEN` | Pre-seed Plex; same pattern for `TAUTULLI_`, `SONARR_`, `RADARR_`, `SEERR_` |
 | `SONARR_2_URL` / `SONARR_2_API_KEY` | A second instance, e.g. a 4K setup (up to 4) |
 
@@ -282,6 +283,8 @@ plexcleaner report --users              # list inactive users
 plexcleaner plan --top 10               # plan from the 10 largest candidates
 plexcleaner apply 3                     # simulate plan #3
 plexcleaner apply 3 --live --confirm DELETE
+plexcleaner reset-password              # locked out of the web UI
+plexcleaner reset-password --set 'pw'   # ...or set a new one outright
 plexcleaner reset-settings              # discard UI settings, fall back to env
 ```
 
@@ -339,6 +342,26 @@ badges all follow from that.
 ---
 
 ## Troubleshooting
+
+**Locked out of the web UI / forgot the password.** Setting
+`PLEXCLEANER_PASSWORD` will *not* get you back in — saved settings outrank the
+environment, which is the documented precedence. Clear the saved password
+instead, which leaves every service URL, API key and rule untouched:
+
+```bash
+docker exec plexcleaner plexcleaner reset-password
+# or set a new one directly
+docker exec plexcleaner plexcleaner reset-password --set 'new-password'
+```
+
+No shell handy — Synology Container Manager, say? Add
+`PLEXCLEANER_RESET_PASSWORD=true` to the container's environment and restart.
+The saved password is cleared on boot and the log says so. **Remove the
+variable afterwards**, or it clears the password on every restart.
+
+Anyone who can exec into the container or edit its environment can do this.
+That is the normal self-hosted trust model — host access is full access — and
+why the container belongs on a machine you control.
 
 **`Error response from daemon: Head "https://ghcr.io/v2/.../manifests/latest"`
 — unauthorized / denied.** The image was built and published, but this

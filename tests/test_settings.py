@@ -294,3 +294,85 @@ class TestWarnings:
     def test_wide_open_networks_warn(self, tmp_path):
         store = make_store(tmp_path, {"PLEXCLEANER_ALLOWED_NETWORKS": "0.0.0.0/0"})
         assert any("0.0.0.0/0" in w for w in store.current().warnings())
+
+
+class TestPasswordRecovery:
+    """Locking yourself out of the web UI must not cost you the whole config."""
+
+    def test_env_password_cannot_override_a_saved_one(self, tmp_path):
+        """The trap this feature exists for: saved beats env, by design."""
+        store = make_store(tmp_path)
+        store.save({"app": {"password": "forgotten"}})
+
+        rescue = SettingsStore(store.db, yaml_path=None,
+                               environ={"PLEXCLEANER_PASSWORD": "rescue"})
+        assert rescue.current().app.password == "forgotten"
+
+    def test_reset_password_clears_it(self, tmp_path):
+        store = make_store(tmp_path)
+        store.save({"app": {"password": "forgotten"}})
+        store.reset_password()
+        assert store.current().app.password == ""
+
+    def test_reset_password_keeps_everything_else(self, tmp_path):
+        """The whole point: reset() would have thrown these away."""
+        store = make_store(tmp_path)
+        store.save({
+            "app": {"password": "forgotten", "allowed_networks": ["10.9.0.0/24"]},
+            "plex": {"enabled": True, "url": "http://p:32400", "token": "keepme"},
+            "rules": {"media": {"unwatched_days": 999}},
+        })
+        store.reset_password()
+        cfg = store.current()
+        assert cfg.plex.token == "keepme"
+        assert cfg.plex.url == "http://p:32400"
+        assert cfg.rules.media.unwatched_days == 999
+        assert cfg.app.allowed_networks == ["10.9.0.0/24"]
+        assert cfg.app.password == ""
+
+    def test_reset_password_can_set_a_new_one(self, tmp_path):
+        store = make_store(tmp_path)
+        store.save({"app": {"password": "forgotten"}})
+        store.reset_password("brand-new")
+        assert store.current().app.password == "brand-new"
+
+    def test_clearing_unshadows_the_env_password(self, tmp_path):
+        """Once the saved value is gone, the env layer applies again."""
+        store = make_store(tmp_path, {"PLEXCLEANER_PASSWORD": "from-env"})
+        store.save({"app": {"password": "saved-one"}})
+        assert store.current().app.password == "saved-one"
+        store.reset_password()
+        assert store.current().app.password == "from-env"
+
+    def test_reset_password_on_a_store_with_no_password_is_harmless(self, tmp_path):
+        store = make_store(tmp_path)
+        store.save({"plex": {"enabled": True, "url": "http://p:32400", "token": "t"}})
+        store.reset_password()
+        assert store.current().plex.token == "t"
+
+    def test_reset_is_audited_without_logging_the_password(self, tmp_path):
+        store = make_store(tmp_path)
+        store.save({"app": {"password": "hunter2"}})
+        store.reset_password("new-secret-xyzzy")
+        rows = store.db.query(
+            "SELECT * FROM audit_log WHERE action = 'password_reset'")
+        assert len(rows) == 1
+        assert "hunter2" not in rows[0]["detail"]
+        assert "xyzzy" not in rows[0]["detail"]
+
+    def test_escape_hatch_clears_when_the_env_var_is_set(self, tmp_path):
+        store = make_store(tmp_path, {"PLEXCLEANER_RESET_PASSWORD": "true"})
+        store.save({"app": {"password": "forgotten"}})
+        assert store.apply_password_escape_hatch() is True
+        assert store.current().app.password == ""
+
+    def test_escape_hatch_does_nothing_without_the_env_var(self, tmp_path):
+        store = make_store(tmp_path)
+        store.save({"app": {"password": "keep-me"}})
+        assert store.apply_password_escape_hatch() is False
+        assert store.current().app.password == "keep-me"
+
+    def test_escape_hatch_is_a_noop_when_no_password_is_saved(self, tmp_path):
+        """So a forgotten variable does not log a scary warning every boot."""
+        store = make_store(tmp_path, {"PLEXCLEANER_RESET_PASSWORD": "true"})
+        assert store.apply_password_escape_hatch() is False
