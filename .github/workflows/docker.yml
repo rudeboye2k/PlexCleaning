@@ -10,7 +10,10 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # Pinned rather than derived from ${{ github.repository }}: the repo is
+  # PlexCleaning, but the app, the CLI and the compose service are all
+  # "plexcleaner", and three names for one thing is a foot-gun.
+  IMAGE_NAME: ${{ github.repository_owner }}/plexcleaner
 
 jobs:
   test:

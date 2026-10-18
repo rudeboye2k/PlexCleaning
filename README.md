@@ -22,11 +22,11 @@ service calls, and confirming.
 
 > **First time: pick where the image comes from.**
 > This repository is **private**, so the image CI publishes to
-> `ghcr.io/rudeboye2k/plexcleaning` is private too, and a NAS pulling it will
+> `ghcr.io/rudeboye2k/plexcleaner` is private too, and a NAS pulling it will
 > fail with `unauthorized`. Choose one:
 >
 > - **Make the package public** (easiest). After the first CI run, go to your
->   GitHub profile → **Packages** → `plexcleaning` → **Package settings** →
+>   GitHub profile → **Packages** → `plexcleaner` → **Package settings** →
 >   *Change visibility* → **Public**. The image contains no secrets — all
 >   configuration lives in your `/data` volume. Then the compose files work
 >   as-is.
@@ -70,7 +70,7 @@ docker run -d --name plexcleaner \
   -e PUID=1000 -e PGID=1000 \
   -e PLEXCLEANER_ALLOWED_NETWORKS=192.168.1.0/24 \
   --restart unless-stopped \
-  ghcr.io/rudeboye2k/plexcleaning:latest
+  ghcr.io/rudeboye2k/plexcleaner:latest
 ```
 
 ### From source
@@ -96,6 +96,27 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
 Then open `http://your-host:8585` and the wizard takes over.
+
+---
+
+## Moving from `plexcleaning` to `plexcleaner`
+
+Builds before October 2026 published to `ghcr.io/<owner>/plexcleaning`, named
+after the repository. The image is now `ghcr.io/<owner>/plexcleaner`, matching
+the CLI and the compose service, so there is one name instead of three.
+
+If you are already running the old image:
+
+1. Change the `image:` line in your compose file to
+   `ghcr.io/rudeboye2k/plexcleaner:latest`.
+2. Make the **new** package public once, the same way you did the old one:
+   profile → **Packages** → `plexcleaner` → **Package settings** →
+   *Change visibility*. It is a separate package, so it starts private.
+3. `docker compose pull && docker compose up -d`.
+
+Your data is untouched — it lives in the `/data` volume, not the image. The old
+`plexcleaning` package keeps working until you delete it, so there is no rush
+and no window where nothing runs.
 
 ---
 
@@ -354,12 +375,12 @@ badges all follow from that.
 
 ## Troubleshooting
 
-**"No such container: plexcleaner".** Three similar names are in play: the
-image is `plexcleaning` (after the repository), the CLI inside it is
-`plexcleaner`, and your container is whatever your compose file's
-`container_name` says. Run `docker ps --format '{{.Names}}'` to see yours, or
-sidestep it entirely with `docker compose exec plexcleaner <command>`, which
-uses the compose *service* name.
+**"No such container: plexcleaner".** The image, the CLI and the compose
+service are all `plexcleaner`, but your *container* is whatever your compose
+file's `container_name` says, which may differ. Run
+`docker ps --format '{{.Names}}'` to see yours, or sidestep it entirely with
+`docker compose exec plexcleaner <command>`, which uses the compose *service*
+name and does not care what the container is called.
 
 **Locked out of the web UI / forgot the password.** Setting
 `PLEXCLEANER_PASSWORD` will *not* get you back in — saved settings outrank the
@@ -388,7 +409,7 @@ why the container belongs on a machine you control.
 — unauthorized / denied.** The image was built and published, but this
 repository is private, so its GHCR package is private too and an
 unauthenticated pull is rejected. Make the package public at
-`https://github.com/users/<you>/packages/container/plexcleaning/settings` →
+`https://github.com/users/<you>/packages/container/plexcleaner/settings` →
 *Change visibility* → **Public** (the image holds no secrets; your repository
 stays private either way), or `docker login ghcr.io` on the host with a
 `read:packages` token, or build locally with `docker-compose.build.yml`.

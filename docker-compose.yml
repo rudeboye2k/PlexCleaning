@@ -6,7 +6,7 @@
 # or shell access.
 services:
   plexcleaner:
-    image: ghcr.io/rudeboye2k/plexcleaning:latest
+    image: ghcr.io/rudeboye2k/plexcleaner:latest
     container_name: plexcleaner
     restart: unless-stopped
 
