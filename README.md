@@ -288,7 +288,18 @@ plexcleaner reset-password --set 'pw'   # ...or set a new one outright
 plexcleaner reset-settings              # discard UI settings, fall back to env
 ```
 
-Inside a container: `docker exec plexcleaner plexcleaner config`.
+Inside a container, the first name is *your container*, the second is the
+program inside it — they are not always the same:
+
+```bash
+docker exec <your-container> plexcleaner config
+# e.g. if your container is named plexcleaning:
+docker exec plexcleaning plexcleaner config
+# or by compose service name, whatever the container is called:
+docker compose exec plexcleaner plexcleaner config
+```
+
+`docker ps --format '{{.Names}}'` lists what yours is actually called.
 
 `plexcleaner config` is the fastest way to see what a container actually thinks
 its settings are, including which environment variables are being shadowed.
@@ -343,15 +354,25 @@ badges all follow from that.
 
 ## Troubleshooting
 
+**"No such container: plexcleaner".** Three similar names are in play: the
+image is `plexcleaning` (after the repository), the CLI inside it is
+`plexcleaner`, and your container is whatever your compose file's
+`container_name` says. Run `docker ps --format '{{.Names}}'` to see yours, or
+sidestep it entirely with `docker compose exec plexcleaner <command>`, which
+uses the compose *service* name.
+
 **Locked out of the web UI / forgot the password.** Setting
 `PLEXCLEANER_PASSWORD` will *not* get you back in — saved settings outrank the
 environment, which is the documented precedence. Clear the saved password
 instead, which leaves every service URL, API key and rule untouched:
 
 ```bash
-docker exec plexcleaner plexcleaner reset-password
+# <your-container> is whatever `docker ps` calls it — often not "plexcleaner"
+docker exec <your-container> plexcleaner reset-password
 # or set a new one directly
-docker exec plexcleaner plexcleaner reset-password --set 'new-password'
+docker exec <your-container> plexcleaner reset-password --set 'new-password'
+# or, independent of the container name:
+docker compose exec plexcleaner plexcleaner reset-password
 ```
 
 No shell handy — Synology Container Manager, say? Add
