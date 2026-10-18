@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -126,6 +127,46 @@ def _probe(kind: str, payload: dict[str, Any], cfg: Config) -> dict[str, Any]:
         return client.test().to_dict() | {"name": name}
     finally:
         client.close()
+
+
+# When Plex is unreachable, stop probing it on every page load.
+_MACHINE_ID_COOLDOWN = 300.0
+
+def _plex_machine_id(cfg: Config, db: Database) -> str:
+    """The Plex machine identifier, fetched on demand and remembered.
+
+    Scans record this, but an install that last scanned on an older build has
+    nothing stored, and the Plex deep link cannot be addressed without it.
+    Rather than making people re-scan just for one icon, resolve it once here
+    and cache it — it never changes for a given server.
+
+    A failure is cached too, briefly. Without that, an unreachable Plex would
+    make every single media request pay a connection timeout, which turns one
+    missing icon into a page that appears to hang.
+    """
+    stored = str(db.get_setting("plex_machine_id", "") or "")
+    if stored or not (cfg.plex.enabled and cfg.plex.url and cfg.plex.token):
+        return stored
+    if time.time() < float(db.get_setting("plex_machine_id_retry_after", 0) or 0):
+        return ""
+
+    # One short attempt: this is a nicety, not something worth waiting on.
+    client = PlexClient(cfg.plex.url, cfg.plex.token, timeout=5,
+                        verify_ssl=cfg.plex.verify_ssl, retries=1)
+    try:
+        machine_id = client.machine_id
+    except ClientError as exc:
+        db.set_setting("plex_machine_id_retry_after", time.time() + _MACHINE_ID_COOLDOWN)
+        log.warning("could not resolve the Plex machine id for deep links, "
+                    "not retrying for %ds: %s", int(_MACHINE_ID_COOLDOWN), exc)
+        return ""
+    finally:
+        client.close()
+
+    if machine_id:
+        db.set_setting("plex_machine_id", machine_id)
+        log.info("resolved and cached the Plex machine id for deep links")
+    return machine_id
 
 
 def create_app(store: SettingsStore, db: Database) -> FastAPI:
@@ -446,12 +487,21 @@ def create_app(store: SettingsStore, db: Database) -> FastAPI:
         rows = db.query(f"SELECT * FROM media_item WHERE {clause} ORDER BY {order} LIMIT ? OFFSET ?",
                         (*params, min(limit, 2000), offset))
 
-        linker = LinkBuilder(store.current(), str(db.get_setting("plex_machine_id", "") or ""))
+        cfg = store.current()
+        linker = LinkBuilder(cfg, _plex_machine_id(cfg, db))
         return {
             "scan_id": scan["id"],
             "total": total["c"] if total else 0,
             "sort": sort_key,
             "dir": direction.lower(),
+            # Lets the table say "not in Sonarr/Radarr" only when there is an
+            # *arr to be missing from, rather than nagging people without one.
+            "services": {
+                "plex": cfg.plex.enabled,
+                "tautulli": cfg.tautulli.enabled,
+                "arr": any(a.enabled for a in cfg.all_arrs()),
+                "seerr": cfg.seerr.enabled,
+            },
             "items": [_media_json(r, linker) for r in rows],
             "libraries": [r["plex_library"] for r in db.query(
                 "SELECT DISTINCT plex_library FROM media_item WHERE scan_id = ? "

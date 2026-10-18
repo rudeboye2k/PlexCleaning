@@ -243,3 +243,28 @@ class TestConnectionTests:
         assert results["tautulli"]["ok"] is True
         assert results["sonarr"]["ok"] is False or results["sonarr"]["ok"] is True
         assert results["seerr"]["ok"] is False or results["seerr"]["ok"] is True
+
+
+class TestMatchReporting:
+    """A low match rate is why a service icon goes missing, so the scan says so."""
+
+    def test_stats_report_how_many_items_matched_each_service(self, cfg, db, services):
+        cfg.plex.exclude_libraries = ["Kids"]
+        scan_id = Scanner(cfg, db, services).run("test")
+        stats = json.loads(db.query_one("SELECT * FROM scan WHERE id = ?", (scan_id,))["stats"])
+        assert stats["arr_matched"] == 2      # the movie and the show both matched
+        assert stats["seerr_matched"] == 2
+        assert stats["media_total"] == 2
+
+    def test_unmatched_items_are_counted_as_such(self, cfg, db, services, mock_services):
+        """With Sonarr down, the show matches nothing and the count shows it."""
+        cfg.plex.exclude_libraries = ["Kids"]
+        mock_services.get(f"{SONARR}/api/v3/series").mock(return_value=httpx.Response(500))
+        scan_id = Scanner(cfg, db, services).run("test")
+        stats = json.loads(db.query_one("SELECT * FROM scan WHERE id = ?", (scan_id,))["stats"])
+        assert stats["arr_matched"] == 1      # only the Radarr movie
+
+    def test_scan_records_the_plex_machine_id_for_deep_links(self, cfg, db, services):
+        cfg.plex.exclude_libraries = ["Kids"]
+        Scanner(cfg, db, services).run("test")
+        assert db.get_setting("plex_machine_id") == "machine-1"

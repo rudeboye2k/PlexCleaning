@@ -390,3 +390,88 @@ class TestMediaLinks:
         item = client_for(store, db).get("/api/media").json()["items"][0]
         assert isinstance(item["links"], list)
         assert all(l["service"] != "plex" for l in item["links"])
+
+
+class TestLinksWithoutARescan:
+    """Rows left by an older build have no slug and no cached machine id."""
+
+    def _legacy_row(self, db, movie, *, arr=True):
+        import json as _json
+        scan_id = db.insert("scan", {"started_at": "2026-10-18T00:00:00+00:00",
+                                     "status": "complete"})
+        movie.verdict = "candidate"
+        if not arr:
+            movie.arr_instance = None
+            movie.arr_id = None
+        row = movie.to_row(scan_id)
+        row["detail"] = _json.dumps({"ref": movie.ref})   # no arr_slug
+        db.insert("media_item", row)
+        return scan_id
+
+    def test_plex_machine_id_is_resolved_on_demand(self, store, db, cfg, movie, monkeypatch):
+        """The Plex icon must not require re-scanning to appear."""
+        self._legacy_row(db, movie)
+        assert db.get_setting("plex_machine_id", "") in ("", None)
+
+        from plexcleaner.clients import PlexClient
+        monkeypatch.setattr(PlexClient, "machine_id",
+                            property(lambda self: "resolved-machine"))
+
+        item = client_for(store, db).get("/api/media").json()["items"][0]
+        plex = next(l for l in item["links"] if l["service"] == "plex")
+        assert "resolved-machine" in plex["url"]
+        # ...and cached, so the next request costs nothing.
+        assert db.get_setting("plex_machine_id") == "resolved-machine"
+
+    def test_an_unreachable_plex_degrades_quietly(self, store, db, cfg, movie, monkeypatch):
+        """A dead Plex must not 500 the whole media table."""
+        self._legacy_row(db, movie)
+        from plexcleaner.clients import ClientError, PlexClient
+
+        def boom(self):
+            raise ClientError("plex", "connection refused")
+        monkeypatch.setattr(PlexClient, "machine_id", property(boom))
+
+        res = client_for(store, db).get("/api/media")
+        assert res.status_code == 200
+        item = res.json()["items"][0]
+        assert all(l["service"] != "plex" for l in item["links"])
+        # The other services are unaffected.
+        assert {"seerr", "tmdb", "imdb"} <= {l["service"] for l in item["links"]}
+
+    def test_arr_link_falls_back_to_the_list_without_a_slug(self, store, db, cfg, movie):
+        self._legacy_row(db, movie)
+        item = client_for(store, db).get("/api/media").json()["items"][0]
+        radarr = next(l for l in item["links"] if l["service"] == "radarr")
+        assert radarr["url"] == "http://radarr:7878/movie"
+        assert "re-scan" in radarr["label"]
+
+    def test_services_flags_tell_the_ui_what_is_configured(self, store, db, cfg, movie):
+        self._legacy_row(db, movie)
+        services = client_for(store, db).get("/api/media").json()["services"]
+        assert services == {"plex": True, "tautulli": True, "arr": True, "seerr": True}
+
+    def test_unmatched_item_reports_no_arr(self, store, db, cfg, movie):
+        """So the missing icon is explained rather than silent."""
+        self._legacy_row(db, movie, arr=False)
+        item = client_for(store, db).get("/api/media").json()["items"][0]
+        assert item["arr"] is None
+        assert all(l["service"] not in ("sonarr", "radarr") for l in item["links"])
+
+    def test_an_unreachable_plex_is_probed_once_not_every_request(self, store, db, cfg,
+                                                                  movie, monkeypatch):
+        """Otherwise one missing icon makes the whole table pay a timeout per load."""
+        self._legacy_row(db, movie)
+        from plexcleaner.clients import ClientError, PlexClient
+
+        calls = {"n": 0}
+
+        def boom(self):
+            calls["n"] += 1
+            raise ClientError("plex", "connection refused")
+        monkeypatch.setattr(PlexClient, "machine_id", property(boom))
+
+        c = client_for(store, db)
+        for _ in range(4):
+            assert c.get("/api/media").status_code == 200
+        assert calls["n"] == 1, f"probed Plex {calls['n']} times instead of once"

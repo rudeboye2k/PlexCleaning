@@ -54,6 +54,18 @@
       No scan has run yet. Start one to build the candidate lists.
     {% endif %}
   </p>
+  {% if scan_stats.get('media_total') %}
+  <p class="muted small">
+    Cross-referencing matched
+    <strong>{{ scan_stats.get('arr_matched', 0) }}</strong> of
+    {{ scan_stats.get('media_total', 0) }} items to Sonarr/Radarr and
+    <strong>{{ scan_stats.get('seerr_matched', 0) }}</strong> to Seerr.
+    {% if cfg.all_arrs() and scan_stats.get('arr_matched', 0) == 0 %}
+      Nothing matched an *arr — check their URLs and keys under
+      <a href="/settings">Settings</a>, then scan again.
+    {% endif %}
+  </p>
+  {% endif %}
   {% if scan and scan.errors and scan.errors != '[]' %}
     <details class="muted"><summary>Scan reported non-fatal errors</summary><pre>{{ scan.errors }}</pre></details>
   {% endif %}

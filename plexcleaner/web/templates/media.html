@@ -42,7 +42,7 @@
 {% block scripts %}
 <script>
 const state = {offset: 0, limit: 100, total: 0, selected: new Set(), rows: [],
-               scanId: null, sort: 'size', dir: 'desc'};
+               scanId: null, sort: 'size', dir: 'desc', services: {}};
 
 // Column key -> header label. The key is what /api/media sorts on.
 const COLUMNS = [
@@ -66,6 +66,7 @@ async function load() {
   state.rows = data.items;
   state.total = data.total;
   state.scanId = data.scan_id;
+  state.services = data.services || {};
   state.sort = data.sort || state.sort;
   state.dir = data.dir || state.dir;
   fillLibraries(data.libraries || []);
@@ -150,6 +151,9 @@ function linksHtml(r) {
 
 function rowHtml(r) {
   const services = [
+    (!r.arr && state.services.arr)
+      ? `<span class="tag tag-muted" title="No matching entry in Sonarr or Radarr, so there is nothing to link to. Deleting this one falls to Plex.">not in *arr</span>`
+      : '',
     r.arr_status ? `<span class="tag tag-muted">${esc(r.arr_status)}</span>` : '',
     r.seerr_requested_by
       ? `<span class="tag" title="Requested in Seerr by ${esc(r.seerr_requested_by)}">req: ${esc(r.seerr_requested_by)}</span>`

@@ -123,6 +123,11 @@ class Scanner:
             "reclaimable_bytes": sum(m.size_bytes for m in candidates),
             "users_total": len(users),
             "user_candidates": sum(1 for u in users if u.verdict == "candidate"),
+            # How well the cross-referencing actually worked. A low match rate
+            # is the usual reason a service icon is missing from a row, so it
+            # is worth stating rather than leaving people to infer it.
+            "arr_matched": sum(1 for m in media if m.arr_instance),
+            "seerr_matched": sum(1 for m in media if m.seerr_media_id),
         }
 
     def _note_error(self, where: str, exc: Exception) -> None:

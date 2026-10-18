@@ -32,8 +32,10 @@ def _tags(nodes: Any) -> list[str]:
 class PlexClient(HttpClient):
     service = "plex"
 
-    def __init__(self, url: str, token: str, *, timeout: int = 60, verify_ssl: bool = False):
-        super().__init__(url, timeout=timeout, verify_ssl=verify_ssl, headers={"X-Plex-Token": token})
+    def __init__(self, url: str, token: str, *, timeout: int = 60, verify_ssl: bool = False,
+                 retries: int = 3):
+        super().__init__(url, timeout=timeout, verify_ssl=verify_ssl, retries=retries,
+                         headers={"X-Plex-Token": token})
         self.token = token
         self._account = None
         self._machine_id: str | None = None
