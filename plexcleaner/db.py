@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
+
+log = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS scan (
@@ -43,6 +46,10 @@ CREATE TABLE IF NOT EXISTS media_item (
     arr_status        TEXT,
     arr_monitored     INTEGER NOT NULL DEFAULT 0,
     arr_tags          TEXT NOT NULL DEFAULT '[]',
+    video_codec       TEXT,
+    video_resolution  TEXT,
+    audio_codec       TEXT,
+    bitrate_kbps      INTEGER NOT NULL DEFAULT 0,
     seerr_media_id    INTEGER,
     seerr_requested_by TEXT,
     seerr_requested_at TEXT,
@@ -145,6 +152,30 @@ class Database:
         self._local = threading.local()
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+        self._migrate()
+
+    # Columns added after the first release. CREATE TABLE IF NOT EXISTS will
+    # not add them to a database that already exists, so they are applied here.
+    MIGRATIONS: dict[str, list[tuple[str, str]]] = {
+        "media_item": [
+            ("video_codec", "TEXT"),
+            ("video_resolution", "TEXT"),
+            ("audio_codec", "TEXT"),
+            ("bitrate_kbps", "INTEGER NOT NULL DEFAULT 0"),
+        ],
+    }
+
+    def _migrate(self) -> None:
+        with self.connect() as conn:
+            for table, columns in self.MIGRATIONS.items():
+                existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+                if not existing:
+                    continue        # table not created yet; SCHEMA will include them
+                for name, ddl in columns:
+                    if name in existing:
+                        continue
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+                    log.info("migrated %s: added column %s", table, name)
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)

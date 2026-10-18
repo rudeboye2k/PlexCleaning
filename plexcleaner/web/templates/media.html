@@ -18,6 +18,12 @@
         <option value="show">Shows</option>
       </select>
       <select id="f-library"><option value="">All libraries</option></select>
+      <select id="f-codec" title="Filter by video codec">
+        <option value="">Any codec</option>
+        <option value="not-hevc">Not HEVC (re-encode targets)</option>
+      </select>
+      <input id="f-min-bitrate" type="number" min="0" step="1000" placeholder="Min kbps"
+             title="Only show items at or above this video bitrate" style="width: 7rem">
       <input id="f-min-gb" type="number" min="0" step="1" placeholder="Min GB"
              title="Only show items at least this large — the space hogs"
              style="width: 6.5rem">
@@ -51,6 +57,7 @@ const state = {offset: 0, limit: 100, total: 0, selected: new Set(), rows: [],
 const COLUMNS = [
   ['title', 'Title'], ['library', 'Library'], ['size', 'Size'],
   ['watched', 'Last watched'], ['added', 'Added'], ['plays', 'Plays'],
+  ['codec', 'Codec'], ['bitrate', 'Bitrate'],
   ['services', 'Services'], ['why', 'Why'],
 ];
 
@@ -59,6 +66,7 @@ function params() {
     verdict: val('f-verdict'), kind: val('f-kind'), library: val('f-library'),
     sort: state.sort, dir: state.dir, search: val('f-search'),
     min_gb: val('f-min-gb') || 0,
+    codec: val('f-codec'), min_bitrate: val('f-min-bitrate') || 0,
     limit: state.limit, offset: state.offset,
   });
   return '/api/media?' + q.toString();
@@ -75,7 +83,20 @@ async function load() {
   state.sort = data.sort || state.sort;
   state.dir = data.dir || state.dir;
   fillLibraries(data.libraries || []);
+  fillCodecs(data.codecs || []);
   render();
+}
+
+function fillCodecs(codecs) {
+  const sel = document.getElementById('f-codec');
+  if (sel.dataset.filled || !codecs) return;
+  codecs.forEach(c => {
+    if (!c) return;
+    const o = document.createElement('option');
+    o.value = c; o.textContent = c.toUpperCase();
+    sel.appendChild(o);
+  });
+  sel.dataset.filled = '1';
 }
 
 function fillLibraries(libs) {
@@ -147,6 +168,21 @@ function sortBy(key) {
   load();
 }
 
+const EFFICIENT = ['hevc', 'h265', 'av1'];
+
+function codecCell(r) {
+  if (!r.video_codec) return '<span class="muted">—</span>';
+  const efficient = EFFICIENT.includes(r.video_codec.toLowerCase());
+  const res = r.video_resolution ? ` <span class="muted small">${esc(r.video_resolution)}</span>` : '';
+  return `<span class="tag ${efficient ? '' : 'tag-warn'}"
+            title="${efficient ? 'Already an efficient codec' : 'Older codec — a re-encode would likely save space'}"
+          >${esc(r.video_codec.toUpperCase())}</span>${res}`;
+}
+
+function fmtBitrate(kbps) {
+  return kbps >= 1000 ? `${(kbps / 1000).toFixed(1)} Mbps` : `${kbps} kbps`;
+}
+
 function linksHtml(r) {
   if (!r.links || !r.links.length) return '';
   return `<div class="svc-links">` + r.links.map(l =>
@@ -176,6 +212,8 @@ function rowHtml(r) {
     <td class="nowrap">${r.last_watched_at ? fmtDate(r.last_watched_at) : '<span class="never">never</span>'}</td>
     <td class="muted nowrap">${fmtDate(r.added_at)}</td>
     <td class="nowrap">${r.play_count}${r.watcher_count ? ` <span class="muted small">/ ${r.watcher_count}</span>` : ''}</td>
+    <td class="nowrap">${codecCell(r)}</td>
+    <td class="nowrap muted">${r.bitrate_kbps ? fmtBitrate(r.bitrate_kbps) : '—'}</td>
     <td>${services || '<span class="muted">—</span>'}</td>
     <td class="muted small reason">${r.reasons.map(esc).join('<br>')}</td>
   </tr>`;
@@ -213,8 +251,9 @@ document.getElementById('btn-protect').onclick = async () => {
 };
 document.getElementById('prev').onclick = () => { state.offset = Math.max(0, state.offset - state.limit); load(); };
 document.getElementById('next').onclick = () => { state.offset += state.limit; load(); };
-['f-verdict','f-kind','f-library'].forEach(id =>
+['f-verdict','f-kind','f-library','f-codec'].forEach(id =>
   document.getElementById(id).onchange = () => { state.offset = 0; load(); });
+document.getElementById('f-min-bitrate').oninput = debounce(() => { state.offset = 0; load(); }, 400);
 document.getElementById('f-min-gb').oninput = debounce(() => { state.offset = 0; load(); }, 400);
 document.getElementById('f-search').oninput = debounce(() => { state.offset = 0; load(); }, 350);
 

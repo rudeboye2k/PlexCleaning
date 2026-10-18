@@ -116,7 +116,11 @@ class PlexClient(HttpClient):
                 guids[scheme] = legacy.split("://")[-1].split("?")[0]
 
         size = 0
-        for media in row.get("Media", []) or []:
+        # The first Media entry describes the primary version; a second one is
+        # a duplicate copy, so codec and bitrate come from the first.
+        media_list = row.get("Media", []) or []
+        primary = media_list[0] if media_list else {}
+        for media in media_list:
             for part in media.get("Part", []) or []:
                 size += int(part.get("size") or 0)
 
@@ -136,6 +140,10 @@ class PlexClient(HttpClient):
             "leaf_count": int(row.get("leafCount") or 0),
             "viewed_leaf_count": int(row.get("viewedLeafCount") or 0),
             "size_bytes": size,
+            "video_codec": (primary.get("videoCodec") or "").lower() or None,
+            "video_resolution": (primary.get("videoResolution") or "").lower() or None,
+            "audio_codec": (primary.get("audioCodec") or "").lower() or None,
+            "bitrate_kbps": int(primary.get("bitrate") or 0),
             "labels": _tags(row.get("Label")),
             "collections": _tags(row.get("Collection")),
         }

@@ -238,11 +238,15 @@ your entire library.
    Filter by library, and read the *Why* column — every verdict explains itself.
    Use **Never suggest again** for anything you want permanently exempt.
 
-   The **Min GB** box filters down to large files, and the footer shows the
+   **Codec** and **Bitrate** columns show what each file actually is, and the
+   codec filter has a **Not HEVC** option — large files on an older codec are
+   the re-encode shortlist. The **Min GB** box filters down to large files, and the footer shows the
    total size of whatever is currently filtered — handy for finding the
    handful of remuxes eating most of a disk. Note that this view only *finds*
-   them; PlexCleaner does not transcode. Feed the list to Radarr (lower the
-   quality profile and re-search) or to a transcoder like Tdarr.
+   them; PlexCleaner does not transcode. Two standalone helpers in
+   [`scripts/`](scripts/README.md) act on the list: `reencode.py` transcodes to
+   HEVC with verification before replacing anything, and `regrab.py` makes
+   Radarr or Sonarr fetch a smaller release instead. Both dry-run by default.
 
    Under each title is a row of icons linking straight to that item in each
    service that holds it, so you can check something before deleting it:

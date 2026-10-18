@@ -47,6 +47,8 @@ MEDIA_SORTS: dict[str, tuple[str, str]] = {
     "plays": ("play_count", "DESC"),
     "services": ("arr_instance COLLATE NOCASE", "ASC"),
     "why": ("reasons COLLATE NOCASE", "ASC"),
+    "codec": ("video_codec COLLATE NOCASE", "ASC"),
+    "bitrate": ("bitrate_kbps", "DESC"),
     "kind": ("kind COLLATE NOCASE", "ASC"),
 }
 
@@ -454,7 +456,7 @@ def create_app(store: SettingsStore, db: Database) -> FastAPI:
     @app.get("/api/media")
     def api_media(verdict: str = "candidate", kind: str = "", library: str = "",
                   search: str = "", sort: str = "size", dir: str = "", min_gb: float = 0,
-                  limit: int = 500, offset: int = 0):
+                  codec: str = "", min_bitrate: int = 0, limit: int = 500, offset: int = 0):
         scan = db.latest_scan()
         if not scan:
             return {"items": [], "total": 0, "total_bytes": 0, "scan_id": None,
@@ -474,6 +476,16 @@ def create_app(store: SettingsStore, db: Database) -> FastAPI:
         if search:
             where.append("title LIKE ?")
             params.append(f"%{search}%")
+        if codec:
+            if codec == "not-hevc":
+                # The re-encode shortlist: anything still on an older codec.
+                where.append("(video_codec IS NULL OR LOWER(video_codec) NOT IN ('hevc', 'h265', 'av1'))")
+            else:
+                where.append("LOWER(video_codec) = ?")
+                params.append(codec.lower())
+        if min_bitrate and min_bitrate > 0:
+            where.append("bitrate_kbps >= ?")
+            params.append(int(min_bitrate))
         if min_gb and min_gb > 0:
             # Finding the space hogs worth re-encoding or re-grabbing.
             where.append("size_bytes >= ?")
@@ -500,6 +512,11 @@ def create_app(store: SettingsStore, db: Database) -> FastAPI:
             "total": total["c"] if total else 0,
             "total_bytes": total["b"] if total else 0,
             "min_gb": min_gb,
+            "codec": codec,
+            "min_bitrate": min_bitrate,
+            "codecs": [r["video_codec"] for r in db.query(
+                "SELECT DISTINCT video_codec FROM media_item WHERE scan_id = ? "
+                "AND video_codec IS NOT NULL ORDER BY video_codec", (scan["id"],))],
             "sort": sort_key,
             "dir": direction.lower(),
             # Lets the table say "not in Sonarr/Radarr" only when there is an
@@ -594,6 +611,9 @@ def _media_json(row, linker: LinkBuilder | None = None) -> dict[str, Any]:
         "added_at": row["added_at"], "last_watched_at": row["last_watched_at"],
         "play_count": row["play_count"], "watcher_count": row["watcher_count"],
         "episode_count": row["episode_count"],
+        "video_codec": row["video_codec"],
+        "video_resolution": row["video_resolution"],
+        "bitrate_kbps": row["bitrate_kbps"] or 0,
         "arr": f"{row['arr_instance']}#{row['arr_id']}" if row["arr_instance"] else None,
         "arr_status": row["arr_status"], "seerr_media_id": row["seerr_media_id"],
         "seerr_requested_by": row["seerr_requested_by"], "verdict": row["verdict"],

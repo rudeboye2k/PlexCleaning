@@ -65,6 +65,10 @@ class MediaItem:
 
     size_bytes: int = 0
     episode_count: int = 0
+    video_codec: str | None = None      # h264, hevc, ...
+    video_resolution: str | None = None # 4k, 1080, 720, ...
+    audio_codec: str | None = None
+    bitrate_kbps: int = 0
 
     arr_instance: str | None = None
     arr_id: int | None = None
@@ -125,6 +129,10 @@ class MediaItem:
             "watcher_count": self.watcher_count,
             "size_bytes": self.size_bytes,
             "episode_count": self.episode_count,
+            "video_codec": self.video_codec,
+            "video_resolution": self.video_resolution,
+            "audio_codec": self.audio_codec,
+            "bitrate_kbps": self.bitrate_kbps,
             "arr_instance": self.arr_instance,
             "arr_id": self.arr_id,
             "arr_status": self.arr_status,

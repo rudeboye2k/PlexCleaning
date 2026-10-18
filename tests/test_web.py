@@ -528,3 +528,74 @@ class TestSizeFilter:
     def test_a_floor_above_everything_returns_nothing_not_an_error(self, library):
         titles, body = self.fetch(library, "min_gb=500")
         assert titles == [] and body["total"] == 0 and body["total_bytes"] == 0
+
+
+class TestCodecAndBitrate:
+    """The re-encode worklist: large files still on an older codec."""
+
+    @pytest.fixture
+    def library(self, store, db, cfg):
+        from plexcleaner.models import MediaItem
+        scan_id = db.insert("scan", {"started_at": "2026-10-18T00:00:00+00:00",
+                                     "status": "complete"})
+        rows = [
+            ("Remux 4K",   "h264", "4k",   80, 60000),
+            ("Already HEVC", "hevc", "4k", 25, 15000),
+            ("Old 1080p",  "h264", "1080", 22, 12000),
+            ("AV1 Encode", "av1",  "1080",  6,  3000),
+            ("Unknown",    None,   None,   10,     0),
+        ]
+        for title, codec, res, gb, kbps in rows:
+            db.insert("media_item", MediaItem(
+                kind="movie", title=title, size_bytes=int(gb * 1_000_000_000),
+                video_codec=codec, video_resolution=res, bitrate_kbps=kbps,
+                verdict="candidate").to_row(scan_id))
+        return client_for(store, db)
+
+    def fetch(self, client, query=""):
+        body = client.get(f"/api/media?{query}").json()
+        return [i["title"] for i in body["items"]], body
+
+    def test_codec_and_bitrate_are_returned(self, library):
+        _, body = self.fetch(library, "search=Remux")
+        item = body["items"][0]
+        assert item["video_codec"] == "h264"
+        assert item["video_resolution"] == "4k"
+        assert item["bitrate_kbps"] == 60000
+
+    def test_not_hevc_filter_is_the_re_encode_shortlist(self, library):
+        titles, _ = self.fetch(library, "codec=not-hevc")
+        assert set(titles) == {"Remux 4K", "Old 1080p", "Unknown"}
+
+    def test_not_hevc_excludes_av1_as_already_efficient(self, library):
+        titles, _ = self.fetch(library, "codec=not-hevc")
+        assert "AV1 Encode" not in titles
+
+    def test_unknown_codec_is_included_rather_than_hidden(self, library):
+        """A missing codec might still be a target; do not silently drop it."""
+        titles, _ = self.fetch(library, "codec=not-hevc")
+        assert "Unknown" in titles
+
+    def test_filter_by_an_exact_codec(self, library):
+        titles, _ = self.fetch(library, "codec=hevc")
+        assert titles == ["Already HEVC"]
+
+    def test_min_bitrate_filter(self, library):
+        titles, _ = self.fetch(library, "min_bitrate=15000")
+        assert set(titles) == {"Remux 4K", "Already HEVC"}
+
+    def test_the_actual_worklist_query(self, library):
+        """20GB+, not already efficient — what you would feed a transcoder."""
+        titles, body = self.fetch(library, "min_gb=20&codec=not-hevc&sort=size&dir=desc")
+        assert titles == ["Remux 4K", "Old 1080p"]
+        assert body["total_bytes"] == 102_000_000_000
+
+    def test_sort_by_codec_and_bitrate(self, library):
+        _, body = self.fetch(library, "sort=bitrate&dir=desc")
+        assert body["items"][0]["title"] == "Remux 4K"
+        _, body = self.fetch(library, "sort=codec&dir=asc")
+        assert body["sort"] == "codec"
+
+    def test_available_codecs_are_listed_for_the_dropdown(self, library):
+        _, body = self.fetch(library)
+        assert set(body["codecs"]) == {"h264", "hevc", "av1"}

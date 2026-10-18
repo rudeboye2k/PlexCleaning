@@ -190,6 +190,10 @@ class Scanner:
                     last_watched_at=parsed["last_viewed_at"],
                     play_count=parsed["view_count"],
                     size_bytes=parsed["size_bytes"],
+                    video_codec=parsed.get("video_codec"),
+                    video_resolution=parsed.get("video_resolution"),
+                    audio_codec=parsed.get("audio_codec"),
+                    bitrate_kbps=parsed.get("bitrate_kbps") or 0,
                     episode_count=leaf,
                     in_progress=bool(kind == "show" and leaf and 0 < viewed_leaf < leaf),
                     labels=parsed["labels"],
@@ -270,6 +274,17 @@ class Scanner:
                 item.play_count = max(item.play_count, int(row.get("play_count") or 0))
                 if not item.size_bytes:
                     item.size_bytes = int(row.get("file_size") or 0)
+                # Shows carry no Media block at the Plex series level, so this
+                # is where their codec and bitrate come from.
+                if not item.video_codec and row.get("video_codec"):
+                    item.video_codec = str(row["video_codec"]).lower()
+                if not item.video_resolution and row.get("video_resolution"):
+                    item.video_resolution = str(row["video_resolution"]).lower()
+                if not item.bitrate_kbps and row.get("bitrate"):
+                    try:
+                        item.bitrate_kbps = int(row["bitrate"])
+                    except (TypeError, ValueError):
+                        pass
 
         # 2. Recent history sweep — catches episodes whose parent show row is
         #    stale, and gives us the distinct-watcher count per item.
