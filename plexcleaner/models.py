@@ -72,6 +72,7 @@ class MediaItem:
     arr_monitored: bool = False
     arr_tags: list[str] = field(default_factory=list)
     arr_path: str | None = None
+    arr_slug: str | None = None     # what Sonarr/Radarr route their UI on
 
     seerr_media_id: int | None = None
     seerr_requested_by: str | None = None
@@ -136,7 +137,8 @@ class MediaItem:
             "collections": json.dumps(self.collections),
             "verdict": self.verdict,
             "reasons": json.dumps(self.reasons),
-            "detail": json.dumps({**self.detail, "ref": self.ref, "arr_path": self.arr_path}, default=str),
+            "detail": json.dumps({**self.detail, "ref": self.ref, "arr_path": self.arr_path,
+                 "arr_slug": self.arr_slug, "kind": self.kind}, default=str),
         }
 
     def snapshot(self) -> dict[str, Any]:

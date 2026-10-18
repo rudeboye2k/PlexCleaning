@@ -152,6 +152,13 @@ class Scanner:
             self._note_error("plex sections", exc)
             return []
 
+        # Remembered so the UI can build "open in Plex" links, which have to be
+        # addressed by machine identifier.
+        try:
+            self.db.set_setting("plex_machine_id", plex.machine_id)
+        except ClientError as exc:
+            self._note_error("plex identity", exc)
+
         for section in sections:
             try:
                 rows = plex.section_items(str(section.get("key")))
@@ -316,6 +323,7 @@ class Scanner:
             item.arr_monitored = bool(hit.get("monitored"))
             item.arr_tags = list(hit.get("tags") or [])
             item.arr_path = hit.get("path")
+            item.arr_slug = hit.get("slug")
             # *arr knows the true on-disk size, including files Plex has not
             # scanned yet, so prefer it when Plex reported nothing.
             if not item.size_bytes and hit.get("size_bytes"):
@@ -370,6 +378,10 @@ class Scanner:
             if not hit:
                 continue
             item.seerr_media_id = hit["id"]
+            # Seerr addresses TV by TMDB id, and Plex often only knows the TVDB
+            # one, so borrow Seerr's to make the deep link addressable.
+            if not item.tmdb_id and hit.get("tmdb_id"):
+                item.tmdb_id = hit["tmdb_id"]
             request = latest_request.get(hit["id"])
             if request:
                 item.seerr_requested_by = request.get("requested_by")

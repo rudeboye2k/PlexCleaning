@@ -369,3 +369,42 @@ dialog {
   border: 1px solid var(--border);
 }
 dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
+
+/* Sortable table headers ---------------------------------------------- */
+.table th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.table th.sortable:hover { color: var(--text); }
+.table th.sortable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.table th.sorted { color: var(--accent); }
+.sort-arrow { font-size: 0.7em; opacity: 0.9; }
+
+/* Per-service deep links under a title --------------------------------- */
+.svc-links { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }
+.svc {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 0.78rem;
+  line-height: 1;
+  text-decoration: none;
+  /* Emoji glyphs sit high in their box; nudge them back onto the centre line. */
+  padding-top: 1px;
+}
+.svc:hover {
+  border-color: var(--accent);
+  background: rgba(229, 160, 13, 0.12);
+  text-decoration: none;
+  transform: translateY(-1px);
+}
+.svc-tmdb, .svc-imdb { opacity: 0.55; }
+.svc-tmdb:hover, .svc-imdb:hover { opacity: 1; }
+.table td.nowrap, .table th.sortable { white-space: nowrap; }
+/* The reason text is the one column that should absorb the slack. */
+.table td.reason { min-width: 220px; }

@@ -234,9 +234,26 @@ your entire library.
 1. **Dashboard → Test connections.** Fix anything red first.
 2. **Run scan.** Reads every service and builds the candidate lists. Nothing is
    modified. A few minutes for a large library.
-3. **Media tab.** Sort by size, filter by library, and read the *Why* column —
-   every verdict explains itself. Use **Never suggest again** for anything you
-   want permanently exempt.
+3. **Media tab.** Click any column header to sort by it; click again to reverse.
+   Filter by library, and read the *Why* column — every verdict explains itself.
+   Use **Never suggest again** for anything you want permanently exempt.
+
+   Under each title is a row of icons linking straight to that item in each
+   service that holds it, so you can check something before deleting it:
+
+   | Icon | Goes to |
+   |---|---|
+   | 🎬 | The item in Plex |
+   | 📊 | Its watch history in Tautulli |
+   | 📺 / 🍿 | The series in Sonarr / the movie in Radarr |
+   | 🎟️ | Its Seerr page |
+   | 🔎 ★ | TMDB and IMDb, to confirm you have the right title |
+
+   These are built from the URLs you configured, which are what the *container*
+   uses to reach each service. If you configured something only the container
+   can resolve — a Docker alias like `http://plex:32400` — the link will not
+   open from your laptop. Use addresses your browser can reach too; an IP and
+   port is the safe choice.
 4. **Build deletion plan.** Shows the exact service calls, in order.
 5. **Run simulation.** Confirms every call would succeed, changes nothing.
 6. When you trust it: turn off dry run in Settings, return to a plan, type the
@@ -434,6 +451,13 @@ it. The Settings page lists which ones and offers a reset.
 
 **A title reappears after deletion.** *Add import exclusion* was off, and an
 import list re-added it.
+
+**Some service icons are missing under a title.** Deep links need two things
+captured during a scan: the Sonarr/Radarr title slug, and your Plex machine
+identifier. Scans taken before those were recorded have neither, so run one
+fresh scan and the icons fill in. Until then the \*arr icon lands on the series
+or movie list rather than the item, and the Plex icon is omitted rather than
+pointing somewhere wrong.
 
 **Items show 0 GB.** Plex has not scanned the file sizes; the \*arr value is
 used as a fallback, so check the item is matched to Sonarr/Radarr (the Services

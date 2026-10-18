@@ -179,6 +179,7 @@ def _row_to_media(row) -> MediaItem:
         arr_monitored=bool(row["arr_monitored"]),
         arr_tags=json.loads(row["arr_tags"] or "[]"),
         arr_path=detail.get("arr_path"),
+        arr_slug=detail.get("arr_slug"),
         seerr_media_id=row["seerr_media_id"],
         seerr_requested_by=row["seerr_requested_by"],
         seerr_requested_at=parse_ts(row["seerr_requested_at"]),

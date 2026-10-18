@@ -23,6 +23,7 @@ from ..clients import ClientError, PlexClient, SeerrClient, TautulliClient
 from ..clients.arr import RadarrClient, SonarrClient
 from ..config import Config, ConfigError
 from ..db import Database
+from ..links import LinkBuilder
 from ..scan import Scanner, Services
 from ..schema import schema_json
 from ..settings_store import SettingsStore
@@ -32,6 +33,21 @@ log = logging.getLogger(__name__)
 
 HERE = Path(__file__).parent
 
+
+# Sortable media columns: key -> (SQL column, direction on first click).
+# COLLATE NOCASE on text so "apple" and "Apple" sort together rather than
+# every capitalised title landing before every lowercase one.
+MEDIA_SORTS: dict[str, tuple[str, str]] = {
+    "title": ("title COLLATE NOCASE", "ASC"),
+    "library": ("plex_library COLLATE NOCASE", "ASC"),
+    "size": ("size_bytes", "DESC"),
+    "watched": ("last_watched_at", "ASC"),
+    "added": ("added_at", "ASC"),
+    "plays": ("play_count", "DESC"),
+    "services": ("arr_instance COLLATE NOCASE", "ASC"),
+    "why": ("reasons COLLATE NOCASE", "ASC"),
+    "kind": ("kind COLLATE NOCASE", "ASC"),
+}
 
 class ScanRunner:
     """Runs one scan at a time in a worker thread and exposes its state."""
@@ -396,10 +412,12 @@ def create_app(store: SettingsStore, db: Database) -> FastAPI:
     # -- media / users ----------------------------------------------------
     @app.get("/api/media")
     def api_media(verdict: str = "candidate", kind: str = "", library: str = "",
-                  search: str = "", sort: str = "size", limit: int = 500, offset: int = 0):
+                  search: str = "", sort: str = "size", dir: str = "", limit: int = 500,
+                  offset: int = 0):
         scan = db.latest_scan()
         if not scan:
-            return {"items": [], "total": 0, "scan_id": None, "libraries": []}
+            return {"items": [], "total": 0, "scan_id": None, "libraries": [],
+                    "sort": sort, "dir": dir or "desc"}
 
         where = ["scan_id = ?"]
         params: list[Any] = [scan["id"]]
@@ -416,16 +434,25 @@ def create_app(store: SettingsStore, db: Database) -> FastAPI:
             where.append("title LIKE ?")
             params.append(f"%{search}%")
 
-        order = {"size": "size_bytes DESC", "title": "title ASC",
-                 "watched": "last_watched_at ASC", "added": "added_at ASC"}.get(sort, "size_bytes DESC")
+        sort_key = sort if sort in MEDIA_SORTS else "size"
+        column, default_dir = MEDIA_SORTS[sort_key]
+        direction = "ASC" if str(dir).lower() == "asc" else (
+            "DESC" if str(dir).lower() == "desc" else default_dir)
+        # `id` as a tiebreaker keeps paging stable when values are equal.
+        order = f"{column} {direction}, id ASC"
+
         clause = " AND ".join(where)
         total = db.query_one(f"SELECT COUNT(*) AS c FROM media_item WHERE {clause}", tuple(params))
         rows = db.query(f"SELECT * FROM media_item WHERE {clause} ORDER BY {order} LIMIT ? OFFSET ?",
                         (*params, min(limit, 2000), offset))
+
+        linker = LinkBuilder(store.current(), str(db.get_setting("plex_machine_id", "") or ""))
         return {
             "scan_id": scan["id"],
             "total": total["c"] if total else 0,
-            "items": [_media_json(r) for r in rows],
+            "sort": sort_key,
+            "dir": direction.lower(),
+            "items": [_media_json(r, linker) for r in rows],
             "libraries": [r["plex_library"] for r in db.query(
                 "SELECT DISTINCT plex_library FROM media_item WHERE scan_id = ? "
                 "AND plex_library IS NOT NULL ORDER BY plex_library", (scan["id"],))],
@@ -500,7 +527,8 @@ def create_app(store: SettingsStore, db: Database) -> FastAPI:
     return app
 
 
-def _media_json(row) -> dict[str, Any]:
+def _media_json(row, linker: LinkBuilder | None = None) -> dict[str, Any]:
+    detail = json.loads(row["detail"] or "{}")
     return {
         "id": row["id"], "kind": row["kind"], "title": row["title"], "year": row["year"],
         "library": row["plex_library"],
@@ -512,7 +540,8 @@ def _media_json(row) -> dict[str, Any]:
         "arr_status": row["arr_status"], "seerr_media_id": row["seerr_media_id"],
         "seerr_requested_by": row["seerr_requested_by"], "verdict": row["verdict"],
         "reasons": json.loads(row["reasons"] or "[]"),
-        "ref": json.loads(row["detail"] or "{}").get("ref", ""),
+        "ref": detail.get("ref", ""),
+        "links": linker.for_row(row, detail) if linker else [],
     }
 
 

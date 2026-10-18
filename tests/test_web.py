@@ -271,3 +271,122 @@ class TestSettingsPortal:
         c = authorized(store, db)
         res = c.post("/api/test-service", headers=csrf(c), json={"kind": "wat"})
         assert res.json()["ok"] is False
+
+
+class TestMediaSorting:
+    """Every column header is clickable and toggles direction."""
+
+    @pytest.fixture
+    def seeded(self, store, db, cfg):
+        from plexcleaner.models import MediaItem, parse_ts
+        scan_id = db.insert("scan", {"started_at": "2026-10-18T00:00:00+00:00",
+                                     "status": "complete"})
+        rows = [
+            # title,        lib,     size_gb, watched,      added,        plays
+            ("apple show",  "TV",      5,  "2020-01-01", "2019-01-01",  2),
+            ("Banana Film", "Movies", 50,  None,         "2018-01-01", 10),
+            ("cherry Film", "Movies", 20,  "2024-01-01", "2023-01-01",  0),
+        ]
+        for title, lib, gb, watched, added, plays in rows:
+            item = MediaItem(
+                kind="show" if lib == "TV" else "movie", title=title,
+                plex_library=lib, size_bytes=gb * 1_000_000_000,
+                last_watched_at=parse_ts(watched), added_at=parse_ts(added),
+                play_count=plays, verdict="candidate",
+            )
+            db.insert("media_item", item.to_row(scan_id))
+        return client_for(store, db)
+
+    def titles(self, client, query=""):
+        body = client.get(f"/api/media?{query}").json()
+        return [i["title"] for i in body["items"]], body
+
+    def test_default_is_largest_first(self, seeded):
+        titles, body = self.titles(seeded)
+        assert titles == ["Banana Film", "cherry Film", "apple show"]
+        assert (body["sort"], body["dir"]) == ("size", "desc")
+
+    def test_size_ascending(self, seeded):
+        titles, _ = self.titles(seeded, "sort=size&dir=asc")
+        assert titles == ["apple show", "cherry Film", "Banana Film"]
+
+    def test_title_sort_ignores_case(self, seeded):
+        """Without COLLATE NOCASE, "Banana" would sort before "apple"."""
+        titles, _ = self.titles(seeded, "sort=title&dir=asc")
+        assert titles == ["apple show", "Banana Film", "cherry Film"]
+
+    def test_title_descending(self, seeded):
+        titles, _ = self.titles(seeded, "sort=title&dir=desc")
+        assert titles == ["cherry Film", "Banana Film", "apple show"]
+
+    def test_never_watched_sorts_first_ascending(self, seeded):
+        """Ascending means longest-unwatched first, and never is the extreme."""
+        titles, _ = self.titles(seeded, "sort=watched&dir=asc")
+        assert titles[0] == "Banana Film"
+
+    def test_most_recently_watched_first_descending(self, seeded):
+        titles, _ = self.titles(seeded, "sort=watched&dir=desc")
+        assert titles[0] == "cherry Film"
+
+    def test_added_oldest_first_by_default(self, seeded):
+        titles, body = self.titles(seeded, "sort=added")
+        assert titles[0] == "Banana Film"
+        assert body["dir"] == "asc"
+
+    def test_plays_highest_first_by_default(self, seeded):
+        titles, body = self.titles(seeded, "sort=plays")
+        assert titles[0] == "Banana Film"
+        assert body["dir"] == "desc"
+
+    def test_library_sort(self, seeded):
+        titles, _ = self.titles(seeded, "sort=library&dir=asc")
+        assert titles[-1] == "apple show"   # "TV" sorts after "Movies"
+
+    def test_every_advertised_column_is_sortable(self, seeded):
+        from plexcleaner.web.app import MEDIA_SORTS
+        for key in MEDIA_SORTS:
+            _, body = self.titles(seeded, f"sort={key}")
+            assert body["sort"] == key, key
+
+    def test_an_unknown_sort_key_falls_back_rather_than_erroring(self, seeded):
+        """Guards the f-string in ORDER BY against anything unexpected."""
+        _, body = self.titles(seeded, "sort=; DROP TABLE media_item--")
+        assert body["sort"] == "size"
+        assert db_intact(seeded)
+
+    def test_a_bogus_direction_falls_back_to_the_column_default(self, seeded):
+        _, body = self.titles(seeded, "sort=size&dir=sideways")
+        assert body["dir"] == "desc"
+
+    def test_sorting_survives_filtering(self, seeded):
+        titles, _ = self.titles(seeded, "kind=movie&sort=title&dir=asc")
+        assert titles == ["Banana Film", "cherry Film"]
+
+
+def db_intact(client) -> bool:
+    return client.get("/api/media").status_code == 200
+
+
+class TestMediaLinks:
+    def test_rows_carry_service_links(self, store, db, cfg, movie):
+        scan_id = db.insert("scan", {"started_at": "2026-10-18T00:00:00+00:00",
+                                     "status": "complete"})
+        movie.verdict = "candidate"
+        movie.arr_slug = "old-movie-2001"
+        db.insert("media_item", movie.to_row(scan_id))
+        db.set_setting("plex_machine_id", "machine-1")
+
+        item = client_for(store, db).get("/api/media").json()["items"][0]
+        services = {l["service"]: l["url"] for l in item["links"]}
+        assert services["radarr"] == "http://radarr:7878/movie/old-movie-2001"
+        assert services["seerr"] == "http://seerr:5055/movie/500"
+        assert "machine-1" in services["plex"]
+
+    def test_links_are_empty_rather_than_absent_without_a_machine_id(self, store, db, cfg, movie):
+        scan_id = db.insert("scan", {"started_at": "2026-10-18T00:00:00+00:00",
+                                     "status": "complete"})
+        movie.verdict = "candidate"
+        db.insert("media_item", movie.to_row(scan_id))
+        item = client_for(store, db).get("/api/media").json()["items"][0]
+        assert isinstance(item["links"], list)
+        assert all(l["service"] != "plex" for l in item["links"])

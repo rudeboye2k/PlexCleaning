@@ -18,12 +18,6 @@
         <option value="show">Shows</option>
       </select>
       <select id="f-library"><option value="">All libraries</option></select>
-      <select id="f-sort">
-        <option value="size">Largest first</option>
-        <option value="watched">Longest unwatched</option>
-        <option value="added">Oldest added</option>
-        <option value="title">Title</option>
-      </select>
       <input id="f-search" type="search" placeholder="Search title…">
     </div>
   </div>
@@ -47,12 +41,20 @@
 
 {% block scripts %}
 <script>
-const state = {offset: 0, limit: 100, total: 0, selected: new Set(), rows: [], scanId: null};
+const state = {offset: 0, limit: 100, total: 0, selected: new Set(), rows: [],
+               scanId: null, sort: 'size', dir: 'desc'};
+
+// Column key -> header label. The key is what /api/media sorts on.
+const COLUMNS = [
+  ['title', 'Title'], ['library', 'Library'], ['size', 'Size'],
+  ['watched', 'Last watched'], ['added', 'Added'], ['plays', 'Plays'],
+  ['services', 'Services'], ['why', 'Why'],
+];
 
 function params() {
   const q = new URLSearchParams({
     verdict: val('f-verdict'), kind: val('f-kind'), library: val('f-library'),
-    sort: val('f-sort'), search: val('f-search'),
+    sort: state.sort, dir: state.dir, search: val('f-search'),
     limit: state.limit, offset: state.offset,
   });
   return '/api/media?' + q.toString();
@@ -64,6 +66,8 @@ async function load() {
   state.rows = data.items;
   state.total = data.total;
   state.scanId = data.scan_id;
+  state.sort = data.sort || state.sort;
+  state.dir = data.dir || state.dir;
   fillLibraries(data.libraries || []);
   render();
 }
@@ -78,14 +82,15 @@ function fillLibraries(libs) {
 function render() {
   const wrap = document.getElementById('table-wrap');
   if (!state.rows.length) {
-    wrap.innerHTML = '<p class="muted">Nothing matches. Run a scan from the dashboard if this is unexpected.</p>';
+    wrap.innerHTML = '<p class="muted">Nothing matches. Run a scan from the dashboard '
+      + 'if this is unexpected.</p>';
   } else {
     wrap.innerHTML = `<table class="table">
       <thead><tr>
-        <th></th><th>Title</th><th>Library</th><th>Size</th>
-        <th>Last watched</th><th>Added</th><th>Plays</th><th>Services</th><th>Why</th>
+        <th></th>${COLUMNS.map(headerHtml).join('')}
       </tr></thead>
       <tbody>${state.rows.map(rowHtml).join('')}</tbody></table>`;
+    bindHeaders(wrap);
     wrap.querySelectorAll('input[type=checkbox][data-id]').forEach(cb => {
       cb.checked = state.selected.has(Number(cb.dataset.id));
       cb.onchange = () => {
@@ -102,23 +107,66 @@ function render() {
   updateSelection();
 }
 
+function headerHtml([key, label]) {
+  const active = state.sort === key;
+  const arrow = active ? (state.dir === 'asc' ? ' ▲' : ' ▼') : '';
+  const next = active && state.dir === 'asc' ? 'descending' : 'ascending';
+  return `<th class="sortable${active ? ' sorted' : ''}" data-sort="${key}"
+             title="Sort by ${esc(label)} (${next})"
+             role="button" tabindex="0"
+             aria-sort="${active ? (state.dir === 'asc' ? 'ascending' : 'descending') : 'none'}"
+          >${esc(label)}<span class="sort-arrow">${arrow}</span></th>`;
+}
+
+function bindHeaders(wrap) {
+  wrap.querySelectorAll('th.sortable').forEach(th => {
+    const go = () => sortBy(th.dataset.sort);
+    th.onclick = go;
+    th.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } };
+  });
+}
+
+function sortBy(key) {
+  // Same column toggles direction; a new column starts at the server's
+  // default for it (largest first, longest unwatched first, A-Z, ...).
+  if (state.sort === key) {
+    state.dir = state.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    state.sort = key;
+    state.dir = '';
+  }
+  state.offset = 0;
+  load();
+}
+
+function linksHtml(r) {
+  if (!r.links || !r.links.length) return '';
+  return `<div class="svc-links">` + r.links.map(l =>
+    `<a class="svc svc-${esc(l.service)}" href="${esc(l.url)}" target="_blank"
+        rel="${l.external ? 'noopener noreferrer' : 'noopener'}"
+        title="${esc(l.label)}" aria-label="${esc(l.label)}"
+     >${esc(l.icon)}</a>`).join('') + `</div>`;
+}
+
 function rowHtml(r) {
   const services = [
-    r.arr ? `<span class="tag">${esc(r.arr)}</span>` : '',
-    r.seerr_media_id ? `<span class="tag">seerr#${r.seerr_media_id}</span>` : '',
     r.arr_status ? `<span class="tag tag-muted">${esc(r.arr_status)}</span>` : '',
+    r.seerr_requested_by
+      ? `<span class="tag" title="Requested in Seerr by ${esc(r.seerr_requested_by)}">req: ${esc(r.seerr_requested_by)}</span>`
+      : '',
   ].join(' ');
   return `<tr class="verdict-${esc(r.verdict)}">
     <td><input type="checkbox" data-id="${r.id}"></td>
     <td><strong>${esc(r.title)}</strong> ${r.year ? '<span class="muted">(' + r.year + ')</span>' : ''}
-        ${r.kind === 'show' ? `<span class="muted small">${r.episode_count} eps</span>` : ''}</td>
-    <td class="muted">${esc(r.library || '—')}</td>
-    <td>${r.size_gb ? r.size_gb + ' GB' : '<span class="muted">—</span>'}</td>
-    <td>${r.last_watched_at ? fmtDate(r.last_watched_at) : '<span class="never">never</span>'}</td>
-    <td class="muted">${fmtDate(r.added_at)}</td>
-    <td>${r.play_count}${r.watcher_count ? ` <span class="muted small">/ ${r.watcher_count} users</span>` : ''}</td>
+        ${r.kind === 'show' ? `<span class="muted small">${r.episode_count} eps</span>` : ''}
+        ${linksHtml(r)}</td>
+    <td class="muted nowrap">${esc(r.library || '—')}</td>
+    <td class="nowrap">${r.size_gb ? r.size_gb + ' GB' : '<span class="muted">—</span>'}</td>
+    <td class="nowrap">${r.last_watched_at ? fmtDate(r.last_watched_at) : '<span class="never">never</span>'}</td>
+    <td class="muted nowrap">${fmtDate(r.added_at)}</td>
+    <td class="nowrap">${r.play_count}${r.watcher_count ? ` <span class="muted small">/ ${r.watcher_count}</span>` : ''}</td>
     <td>${services || '<span class="muted">—</span>'}</td>
-    <td class="muted small">${r.reasons.map(esc).join('<br>')}</td>
+    <td class="muted small reason">${r.reasons.map(esc).join('<br>')}</td>
   </tr>`;
 }
 
@@ -154,7 +202,7 @@ document.getElementById('btn-protect').onclick = async () => {
 };
 document.getElementById('prev').onclick = () => { state.offset = Math.max(0, state.offset - state.limit); load(); };
 document.getElementById('next').onclick = () => { state.offset += state.limit; load(); };
-['f-verdict','f-kind','f-library','f-sort'].forEach(id =>
+['f-verdict','f-kind','f-library'].forEach(id =>
   document.getElementById(id).onchange = () => { state.offset = 0; load(); });
 document.getElementById('f-search').oninput = debounce(() => { state.offset = 0; load(); }, 350);
 
