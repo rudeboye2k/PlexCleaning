@@ -475,3 +475,56 @@ class TestLinksWithoutARescan:
         for _ in range(4):
             assert c.get("/api/media").status_code == 200
         assert calls["n"] == 1, f"probed Plex {calls['n']} times instead of once"
+
+
+class TestSizeFilter:
+    """Finding the space hogs worth re-encoding or re-grabbing."""
+
+    @pytest.fixture
+    def library(self, store, db, cfg):
+        from plexcleaner.models import MediaItem
+        scan_id = db.insert("scan", {"started_at": "2026-10-18T00:00:00+00:00",
+                                     "status": "complete"})
+        for title, gb in [("Huge Remux", 60), ("Big 4K", 25), ("Normal", 8), ("Tiny", 1)]:
+            db.insert("media_item", MediaItem(
+                kind="movie", title=title, size_bytes=int(gb * 1_000_000_000),
+                verdict="candidate").to_row(scan_id))
+        return client_for(store, db)
+
+    def fetch(self, client, query=""):
+        body = client.get(f"/api/media?{query}").json()
+        return [i["title"] for i in body["items"]], body
+
+    def test_no_filter_returns_everything(self, library):
+        titles, _ = self.fetch(library)
+        assert len(titles) == 4
+
+    def test_min_gb_keeps_only_the_large_ones(self, library):
+        titles, _ = self.fetch(library, "min_gb=20")
+        assert titles == ["Huge Remux", "Big 4K"]
+
+    def test_boundary_is_inclusive(self, library):
+        """A 25 GB film must show up under a 25 GB floor."""
+        titles, _ = self.fetch(library, "min_gb=25")
+        assert "Big 4K" in titles
+
+    def test_fractional_sizes_work(self, library):
+        titles, _ = self.fetch(library, "min_gb=7.5")
+        assert "Normal" in titles and "Tiny" not in titles
+
+    def test_total_bytes_covers_the_filtered_set_not_the_page(self, library):
+        _, body = self.fetch(library, "min_gb=20")
+        assert body["total_bytes"] == 85_000_000_000
+        assert body["total"] == 2
+
+    def test_filter_combines_with_sorting(self, library):
+        titles, _ = self.fetch(library, "min_gb=20&sort=size&dir=asc")
+        assert titles == ["Big 4K", "Huge Remux"]
+
+    def test_zero_means_no_floor(self, library):
+        titles, _ = self.fetch(library, "min_gb=0")
+        assert len(titles) == 4
+
+    def test_a_floor_above_everything_returns_nothing_not_an_error(self, library):
+        titles, body = self.fetch(library, "min_gb=500")
+        assert titles == [] and body["total"] == 0 and body["total_bytes"] == 0

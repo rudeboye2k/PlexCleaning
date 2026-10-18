@@ -18,6 +18,9 @@
         <option value="show">Shows</option>
       </select>
       <select id="f-library"><option value="">All libraries</option></select>
+      <input id="f-min-gb" type="number" min="0" step="1" placeholder="Min GB"
+             title="Only show items at least this large — the space hogs"
+             style="width: 6.5rem">
       <input id="f-search" type="search" placeholder="Search title…">
     </div>
   </div>
@@ -55,6 +58,7 @@ function params() {
   const q = new URLSearchParams({
     verdict: val('f-verdict'), kind: val('f-kind'), library: val('f-library'),
     sort: state.sort, dir: state.dir, search: val('f-search'),
+    min_gb: val('f-min-gb') || 0,
     limit: state.limit, offset: state.offset,
   });
   return '/api/media?' + q.toString();
@@ -67,6 +71,7 @@ async function load() {
   state.total = data.total;
   state.scanId = data.scan_id;
   state.services = data.services || {};
+  state.totalBytes = data.total_bytes || 0;
   state.sort = data.sort || state.sort;
   state.dir = data.dir || state.dir;
   fillLibraries(data.libraries || []);
@@ -101,8 +106,10 @@ function render() {
       };
     });
   }
+  const tb = state.totalBytes ? ` · ${(state.totalBytes / 1e12).toFixed(2)} TB total` : '';
   document.getElementById('page-info').textContent =
-    `${state.total ? state.offset + 1 : 0}–${Math.min(state.offset + state.limit, state.total)} of ${state.total}`;
+    `${state.total ? state.offset + 1 : 0}–${Math.min(state.offset + state.limit, state.total)}`
+    + ` of ${state.total}${tb}`;
   document.getElementById('prev').disabled = state.offset === 0;
   document.getElementById('next').disabled = state.offset + state.limit >= state.total;
   updateSelection();
@@ -208,6 +215,7 @@ document.getElementById('prev').onclick = () => { state.offset = Math.max(0, sta
 document.getElementById('next').onclick = () => { state.offset += state.limit; load(); };
 ['f-verdict','f-kind','f-library'].forEach(id =>
   document.getElementById(id).onchange = () => { state.offset = 0; load(); });
+document.getElementById('f-min-gb').oninput = debounce(() => { state.offset = 0; load(); }, 400);
 document.getElementById('f-search').oninput = debounce(() => { state.offset = 0; load(); }, 350);
 
 load();

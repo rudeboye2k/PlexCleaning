@@ -453,12 +453,12 @@ def create_app(store: SettingsStore, db: Database) -> FastAPI:
     # -- media / users ----------------------------------------------------
     @app.get("/api/media")
     def api_media(verdict: str = "candidate", kind: str = "", library: str = "",
-                  search: str = "", sort: str = "size", dir: str = "", limit: int = 500,
-                  offset: int = 0):
+                  search: str = "", sort: str = "size", dir: str = "", min_gb: float = 0,
+                  limit: int = 500, offset: int = 0):
         scan = db.latest_scan()
         if not scan:
-            return {"items": [], "total": 0, "scan_id": None, "libraries": [],
-                    "sort": sort, "dir": dir or "desc"}
+            return {"items": [], "total": 0, "total_bytes": 0, "scan_id": None,
+                    "libraries": [], "sort": sort, "dir": dir or "desc", "min_gb": min_gb}
 
         where = ["scan_id = ?"]
         params: list[Any] = [scan["id"]]
@@ -474,6 +474,10 @@ def create_app(store: SettingsStore, db: Database) -> FastAPI:
         if search:
             where.append("title LIKE ?")
             params.append(f"%{search}%")
+        if min_gb and min_gb > 0:
+            # Finding the space hogs worth re-encoding or re-grabbing.
+            where.append("size_bytes >= ?")
+            params.append(int(min_gb * 1_000_000_000))
 
         sort_key = sort if sort in MEDIA_SORTS else "size"
         column, default_dir = MEDIA_SORTS[sort_key]
@@ -483,7 +487,9 @@ def create_app(store: SettingsStore, db: Database) -> FastAPI:
         order = f"{column} {direction}, id ASC"
 
         clause = " AND ".join(where)
-        total = db.query_one(f"SELECT COUNT(*) AS c FROM media_item WHERE {clause}", tuple(params))
+        total = db.query_one(
+            f"SELECT COUNT(*) AS c, COALESCE(SUM(size_bytes), 0) AS b "
+            f"FROM media_item WHERE {clause}", tuple(params))
         rows = db.query(f"SELECT * FROM media_item WHERE {clause} ORDER BY {order} LIMIT ? OFFSET ?",
                         (*params, min(limit, 2000), offset))
 
@@ -492,6 +498,8 @@ def create_app(store: SettingsStore, db: Database) -> FastAPI:
         return {
             "scan_id": scan["id"],
             "total": total["c"] if total else 0,
+            "total_bytes": total["b"] if total else 0,
+            "min_gb": min_gb,
             "sort": sort_key,
             "dir": direction.lower(),
             # Lets the table say "not in Sonarr/Radarr" only when there is an
